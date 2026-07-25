@@ -1,6 +1,6 @@
 # active-issues（正本）
 
-最終更新: 2026-07-25（Issue #117 transactional outbox PoCをレビュー準備中）
+最終更新: 2026-07-25（Issue #117 transactional outbox PoCをレビュー中）
 
 ## この文書の目的
 進行中/未解決課題を、優先順位と依存関係付きで管理する。
@@ -14,13 +14,14 @@
 
 ### #117 submission作成とqueue publishのdual-writeをtransactional outboxで解消する
 - 優先度: P2
-- 状態: Open / In Progress
+- 状態: Open / Review
 - GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/117`
-- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/118`（Draft）
+- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/118`（Ready for review）
 - 作業branch: `feat/transactional-outbox-poc`
 - 目的: submission保存とqueue publish intentを同一SQLite transactionで確定し、publish失敗時もpending outboxから再送可能にする。
 - 対象:
   - `queue_outbox` table / pending検索index
+  - status / publish attemptのCHECK制約
   - `(submission_id, grading_attempt)` unique constraint
   - submission + outbox atomic transaction
   - `API_QUEUE_OUTBOX_ENABLED`
@@ -76,7 +77,7 @@
 - 反映内容: enqueue / delivery / claim / heartbeat / retry / queued recovery / stale recoveryをallowlist fieldのJSON Lines eventとして実装した。
 
 ### #111 / PR #112 （完了済み）
-- 優度: P1
+- 優先度: P1
 - 状態: Closed / Merged / Completed
 - 完了日: 2026-07-24
 - GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/111`
