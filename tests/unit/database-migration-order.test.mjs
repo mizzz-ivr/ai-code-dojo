@@ -65,6 +65,45 @@ test('runMigrations adds attempt, lease, and queue outbox schema idempotently', 
   assert.ok(outboxColumnNames.has('last_error_type'));
   assert.ok(outboxIndexes.some((index) => index.name === 'idx_queue_outbox_pending'));
 
+  const insertOutbox = migratedDb.prepare(`
+    INSERT INTO queue_outbox (
+      id,
+      submission_id,
+      grading_attempt,
+      message_json,
+      status,
+      created_at,
+      updated_at,
+      publish_attempts
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  assert.throws(
+    () => insertOutbox.run(
+      'invalid-status',
+      'submission-invalid-status',
+      1,
+      '{}',
+      'invalid',
+      '2026-07-25T00:00:00.000Z',
+      '2026-07-25T00:00:00.000Z',
+      0
+    ),
+    /CHECK constraint failed/
+  );
+  assert.throws(
+    () => insertOutbox.run(
+      'negative-attempts',
+      'submission-negative-attempts',
+      1,
+      '{}',
+      'pending',
+      '2026-07-25T00:00:00.000Z',
+      '2026-07-25T00:00:00.000Z',
+      -1
+    ),
+    /CHECK constraint failed/
+  );
+
   const keyRows = migratedDb.prepare('SELECT attempt_idempotency_key FROM submissions').all();
   const outboxRows = migratedDb.prepare('SELECT id FROM queue_outbox').all();
   assert.deepEqual(keyRows, []);
