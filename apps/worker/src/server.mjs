@@ -14,8 +14,10 @@ import {
   updateSubmissionForAttempt
 } from '../../api/src/repositories/submission-repository.mjs';
 import { enqueueSubmissionAttempt } from '../../api/src/services/submission-service.mjs';
+import { getApplicationRetryBackoffConfig } from './config/application-retry-backoff-config.mjs';
 import { getProcessingLeaseConfig } from './config/processing-lease-config.mjs';
 import { getStaleRecoveryConfig } from './config/stale-recovery-config.mjs';
+import { createApplicationRetryBackoff } from './services/application-retry-backoff.mjs';
 import { runJavaScriptChallenge, runJavaScriptChallengeViaIsolatedJob } from './services/js-runner.mjs';
 import { startStaleRecoveryScanner } from './services/stale-recovery-scanner.mjs';
 
@@ -24,6 +26,8 @@ const useIsolationPoc = process.env.RUNNER_ISOLATION_POC === '1';
 const isProduction = process.env.NODE_ENV === 'production';
 const maxInfraRetryAttempts = Number(process.env.WORKER_MAX_INFRA_RETRY_ATTEMPTS ?? 2);
 const retryEnqueueBaseUrl = process.env.WORKER_RETRY_ENQUEUE_BASE_URL ?? `http://localhost:${port}`;
+const applicationRetryBackoffConfig = getApplicationRetryBackoffConfig(process.env);
+const applicationRetryBackoff = createApplicationRetryBackoff({ config: applicationRetryBackoffConfig });
 const processingLeaseConfig = getProcessingLeaseConfig(process.env);
 const staleRecoveryConfig = getStaleRecoveryConfig(process.env, {
   heartbeatEnabled: processingLeaseConfig.enabled
@@ -167,6 +171,35 @@ const handleInfrastructureFailure = async ({ submissionId, submission, error }) 
     nextAttempt: retriedSubmission.gradingAttempt,
     outcome: 'queued'
   });
+
+  const retryDelay = applicationRetryBackoff.calculate({
+    nextAttempt: retriedSubmission.gradingAttempt
+  });
+  queueEventLogger.info(QUEUE_EVENTS.RETRY_DELAY_SCHEDULED, {
+    submissionId,
+    previousAttempt: submission.gradingAttempt,
+    nextAttempt: retriedSubmission.gradingAttempt,
+    retryOrdinal: retryDelay.retryOrdinal,
+    delayMs: retryDelay.delayMs,
+    capDelayMs: retryDelay.capDelayMs,
+    backoffEnabled: retryDelay.backoffEnabled,
+    outcome: retryDelay.delayMs > 0 ? 'scheduled' : 'immediate'
+  });
+
+  try {
+    await applicationRetryBackoff.wait(retryDelay.delayMs);
+  } catch (delayError) {
+    queueEventLogger.warn(QUEUE_EVENTS.RETRY_DELAY_FAILED, {
+      submissionId,
+      gradingAttempt: retriedSubmission.gradingAttempt,
+      retryOrdinal: retryDelay.retryOrdinal,
+      delayMs: retryDelay.delayMs,
+      backoffEnabled: retryDelay.backoffEnabled,
+      outcome: 'fallback_immediate',
+      reason: 'delay_wait_failed',
+      errorType: delayError?.name ?? 'Error'
+    });
+  }
 
   const enqueued = await enqueueSubmissionAttempt({
     submissionId,
