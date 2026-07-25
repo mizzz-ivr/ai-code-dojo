@@ -1,6 +1,6 @@
 # system-overview（正本）
 
-最終更新: 2026-07-25（Issue #115 application retry backoffを反映）
+最終更新: 2026-07-25（Issue #117 transactional outbox PoCを反映）
 
 ## この文書の目的
 実装詳細に入る前に、システム境界・責務分担・データフローを把握するためのアーキテクチャ概観を提供する。
@@ -8,6 +8,7 @@
 ## システム境界
 - 学習者: Web UIから問題取得・提出・結果確認
 - API: challenge/submission/adminの公開境界、認可制御、submission永続化、採点依頼
+- Transactional outbox: submissionとqueue publish intentのatomic永続化、pending publish再送
 - Queue contract / port: version付きmessage、producer / consumer共通validation、transport差し替え境界
 - Queue transport: 現行HTTP通知、将来のdurable delivery / visibility / ack / retry / DLQ
 - Queue observability: allowlist fieldのJSON Lines event、将来metrics / alertへ変換する監視契約
@@ -17,19 +18,20 @@
 ## 高レベル構成
 1. WebがAPIからchallengeを取得する。
 2. WebがAPIにsubmissionを作成する。
-3. APIがsubmissionをDBへ保存する。
-4. APIがqueue messageを生成し、queue producer portへ渡す。
-5. 現行HTTP adapterがWorker `POST /jobs`へmessageを通知する。
-6. enqueue結果を構造化queue eventとして記録する。
-7. Workerが共通message contractでrequestを検証し、delivery eventを記録する。
-8. WorkerがDB上のsubmissionを条件付きclaimし、claim eventを記録する。
-9. heartbeat有効時はWorkerがprocessing leaseを定期延長する。
-10. WorkerがRunnerでvisible/hidden testsを実行する。
-11. infrastructure failure時はretry上限を確認し、new attemptを作成する。
-12. application retry backoff有効時はnew attemptのHTTP enqueue前にfull jitter delayを適用する。
-13. stale recovery有効時はWorkerが起動時・定期的に期限切れleaseを走査する。
-14. Workerがexpected attempt/keyによるfenced updateとcompletion guardで結果を保存する。
-15. Webがsubmission結果をポーリング表示する。
+3. outbox無効時はAPIがsubmissionを保存後、queue producer portへ同期enqueueする。
+4. outbox有効時はAPIがsubmissionとqueue publish intentを同一SQLite transactionで保存する。
+5. outbox dispatcherがpending messageをqueue producer portへ渡す。
+6. 現行HTTP adapterがWorker `POST /jobs`へmessageを通知する。
+7. enqueue / outbox publish結果を構造化queue eventとして記録する。
+8. Workerが共通message contractでrequestを検証し、delivery eventを記録する。
+9. WorkerがDB上のsubmissionを条件付きclaimし、claim eventを記録する。
+10. heartbeat有効時はWorkerがprocessing leaseを定期延長する。
+11. WorkerがRunnerでvisible / hidden testsを実行する。
+12. infrastructure failure時はretry上限を確認し、new attemptを作成する。
+13. application retry backoff有効時はnew attemptのHTTP enqueue前にfull jitter delayを適用する。
+14. stale recovery有効時はWorkerが起動時・定期的に期限切れleaseを走査する。
+15. Workerがexpected attempt / keyによるfenced updateとcompletion guardで結果を保存する。
+16. Webがsubmission結果をポーリング表示する。
 
 ## queue message contract（Issue #111 / PR #112）
 
@@ -60,15 +62,15 @@ messageへ次を含めない。
 
 ### queue producer port
 - portは `enqueue(message) -> boolean` の最小interfaceとする。
-- API submission作成後、Worker retry、stale recoveryは同じ`enqueueSubmissionAttempt`経路を利用する。
-- transport retryではgrading attempt / attempt idempotency keyを変更しない。
+- API legacy submission、outbox dispatcher、Worker retry、stale recoveryは同じ`enqueueSubmissionAttempt`経路を利用する。
+- transport publishではgrading attempt / attempt idempotency keyを変更しない。
 - API serviceは既存import互換性のため`enqueueSubmissionAttempt`をre-exportする。
 
 ### HTTP adapter
 - 現行adapterはWorker `POST /jobs`へJSONを送る。
 - HTTP 2xxを成功として扱う。
 - 非2xx、network error、contract不正を失敗として扱う。
-- Worker 202はprocess内受理であり、durable queue保存・broker ackを意味しない。
+- Worker 202はprocess内受理であり、durable broker ackを意味しない。
 - adapterはdelivery availabilityの境界であり、採点correctnessを保証しない。
 
 ## queue transport observability（Issue #113 / PR #114）
@@ -76,23 +78,16 @@ messageへ次を含めない。
 ### event contract
 - `packages/queue/src/queue-event-logger.mjs` がevent nameとfield allowlistを正本とする。
 - 一つのeventを一つのJSON objectとしてstdout / stderrへ出力する。
-- logger出力失敗はenqueue・採点・recovery処理へ例外を伝播しない。
-- 未定義eventは出力しない。
-- allowlist外fieldは出力しない。
-- string fieldはログ肥大化を防ぐため最大256文字へ制限する。
-
-共通field:
-- `timestamp`
-- `level`
-- `service`
-- `event`
+- logger出力失敗はenqueue・採点・recovery・outbox処理へ例外を伝播しない。
+- 未定義eventとallowlist外fieldは出力しない。
+- string fieldは最大256文字へ制限する。
 
 許可するcontext例:
 - transport / source / outcome / reason
-- submission id / grading attempt / previous attempt / next attempt
+- submission ID / grading attempt / previous attempt / next attempt
 - retry ordinal / delay / cap / backoff enabled
-- optional correlation id / schema version / HTTP status code
-- trigger / scan件数 / recovery集計
+- optional correlation ID / schema version / HTTP status code
+- trigger / scan件数 / publish・recovery集計
 - generalized error type
 
 禁止field:
@@ -104,7 +99,9 @@ messageへ次を含めない。
 - learnerへ不要なendpoint・認証情報
 
 ### event categories
-- `queue.enqueue.*`: HTTP producerの成功、非2xx、network failure、contract rejection
+- `queue.enqueue.*`: producerの成功、非2xx、network failure、contract rejection
+- `queue.outbox.publish_*`: pending outboxのpublish成功・失敗
+- `queue.outbox.dispatch_*`: batch dispatch結果・dispatcher障害
 - `queue.delivery.*`: Worker `/jobs`のaccepted / rejected
 - `queue.claim.*`: DB conditional claimのsuccess / no-op
 - `queue.heartbeat.failed`: heartbeat更新失敗
@@ -113,17 +110,16 @@ messageへ次を含めない。
 - `queue.stale_recovery.*`: candidate回収、再投入失敗、scan summary
 
 ### metric変換候補
-外部metrics backend導入時はevent集計から次を生成する。
-
 - `queue_enqueue_total{outcome,source}`
+- `queue_outbox_publish_total{outcome,reason}`
+- `queue_outbox_pending_count`
+- `queue_outbox_oldest_pending_age_seconds`
 - `queue_delivery_total{outcome,reason}`
 - `queue_claim_total{outcome,reason}`
 - `queue_retry_total{event,outcome,reason}`
 - `queue_retry_delay_ms`
 - `queue_recovery_total{event,outcome,reason}`
 - `queue_heartbeat_failure_total`
-- `queue_stale_scan_candidates_total`
-- `queue_stale_scan_errors_total`
 
 現時点ではmetrics endpoint、backend、dashboard、alert本番設定を追加しない。
 
@@ -143,31 +139,92 @@ messageへ次を含めない。
 - feature flag無効時はdelay 0msで現行の即時enqueueを維持する。
 
 ### delay policy
-- `retryOrdinal = nextAttempt - 2` とする。
-- `capDelayMs = min(maxDelayMs, baseDelayMs * 2^retryOrdinal)` とする。
-- `delayMs = floor(capDelayMs * random())` のfull jitterを使用する。
-- random / sleepを注入可能にし、実時間待機なしでunit testする。
-- delay waitが失敗した場合は一般化eventを記録し、即時enqueueへフォールバックする。
+- `retryOrdinal = nextAttempt - 2`
+- `capDelayMs = min(maxDelayMs, baseDelayMs * 2^retryOrdinal)`
+- `delayMs = floor(capDelayMs * random())`
+- delay wait失敗時は一般化eventを記録し、即時enqueueへフォールバックする。
 
 ### correctness境界
 - new attempt / new keyはdelay前にDBへ確定する。
-- delay中のsubmission statusは `queued` とする。
-- 別WorkerやWorker再起動時queued回収が先にclaimした場合、後続HTTP deliveryは既存のattempt fencing / conditional claimでno-opになる。
+- delay中のsubmission statusは`queued`とする。
+- 別Workerやstartup queued recoveryが先にclaimした場合、後続deliveryはattempt fencing / conditional claimでno-opになる。
 - process内delayはbest-effortであり、durable delayed deliveryではない。
-- Worker再起動時queued回収はavailability safety netとしてdelayを短絡し得る。
-- durableな再試行時刻が必要な場合はexternal queue delayed deliveryまたは永続化された`next_retry_at`を別Issueで設計する。
 
-### observability
-- `queue.retry.delay_scheduled` にretry ordinal / delay / cap / enabled状態を記録する。
-- `queue.retry.delay_failed` に一般化reason / error typeを記録する。
-- attempt key、code、hidden tests、secret、raw error messageを記録しない。
+## transactional outbox PoC（Issue #117 / PR #118）
+
+### 目的
+- submission保存成功とqueue publish intent登録成功を一つのtransaction境界にする。
+- DB保存後のAPI停止・HTTP enqueue失敗でpublish intentが失われるdual-write問題を解消する。
+- 将来のexternal queue adapter導入前にproducer portと永続化責務を分離する。
+
+### schema
+`queue_outbox`は次を保持する。
+
+- `id`
+- `submission_id`
+- `grading_attempt`
+- `message_json`
+- `status`（`pending` / `published`）
+- `created_at` / `updated_at`
+- `published_at`
+- `publish_attempts`
+- `last_attempted_at`
+- `last_error_type`
+
+制約:
+- `(submission_id, grading_attempt)`を一意にする。
+- pending検索用に`(status, created_at)` indexを使用する。
+- `message_json`はqueue message contractだけを保持し、提出コードやtestsを含めない。
+
+### atomic creation
+- outbox有効時はSQLite `BEGIN IMMEDIATE` transactionを開始する。
+- submission rowを`queued`で作成する。
+- 同じattemptのqueue messageをoutboxへ`pending`で作成する。
+- 両方の作成成功後にcommitする。
+- outbox insertを含む途中失敗時はrollbackし、submissionだけを残さない。
+
+### 設定
+- `API_QUEUE_OUTBOX_ENABLED=1`でoutbox経路を有効化する。
+- `API_QUEUE_OUTBOX_POLL_INTERVAL_MS`の既定値は1000ms。
+- `API_QUEUE_OUTBOX_BATCH_SIZE`の既定値は25。
+- interval / batch sizeは正のsafe integerとする。
+- feature flag無効時はlegacyの保存→同期HTTP enqueueと502挙動を維持する。
+
+### dispatcher
+- API起動時、submission作成直後、設定intervalでpending rowを取得する。
+- batch内の各messageを既存`enqueueSubmissionAttempt`へ渡す。
+- enqueue成功時だけoutboxをpublishedへ更新する。
+- enqueue失敗時はpendingを維持し、publish attempt、最終試行日時、一般化error typeを更新する。
+- message parseやDB更新失敗をraw errorとして出力しない。
+- 同一process内の重複dispatcher実行はskipする。
+
+### API semantics
+- outbox無効時のenqueue失敗は従来どおり502とする。
+- outbox有効時はatomic保存成功をAPI受理条件とし、publish失敗でも201を返す。
+- outbox状態、publish attempt、内部error typeをlearner responseへ返さない。
+
+### delivery / correctness境界
+- outboxはpublish intentのdurabilityを担う。
+- outboxのpublishedは現行HTTP producerが2xxを受けたことを示し、durable broker保存を意味しない。
+- 複数dispatcherや状態更新失敗によりduplicate publishが発生し得る。
+- exactly-once publishへ正しさを依存しない。
+- Worker conditional claim、attempt fencing、processing lease、completion guardが採点correctnessを担う。
+- published更新失敗時はrowをpendingのまま残し、次回publishを許容する。
+
+### PoC制約
+- 実broker adapterは未導入。
+- outbox claim / leaseは未実装で、複数API process間のduplicate publishを許容する。
+- DLQ / replay / purge / retentionは未実装。
+- pending件数・oldest ageのmetrics backendは未実装。
+- SQLite fileを複数ホストから共有する運用は前提にしない。
 
 ## 現行queue transport
 
 ### API producer
-- APIはsubmissionを `queued` で保存後、共通queue producer portへmessageを渡す。
-- 現行HTTP adapterがWorker `POST /jobs`へ同期HTTPで通知する。
-- 通知失敗時もDBのqueued行は残り、Worker起動時queued回収が復旧経路となる。
+- outbox無効時はsubmission保存後にHTTP adapterへ同期通知する。
+- outbox有効時はdispatcherがpending messageをHTTP adapterへ通知する。
+- HTTP通知失敗時もsubmissionは`queued`、outboxは`pending`で残る。
+- Worker起動時queued recoveryはoutboxとは独立したavailability safety netとして維持する。
 
 ### Worker consumer
 - `POST /jobs`は共通message contractによるvalidation後に202を返し、process内で採点処理を開始する。
@@ -175,14 +232,13 @@ messageへ次を含めない。
 - invalid JSON / invalid contractは400で拒否する。
 
 ### 現行制約
-- durable message storageなし
-- ack / nackなし
+- durable broker message storageなし
+- broker ack / nackなし
 - queue visibility timeoutなし
 - delivery countなし
 - transport delayed delivery / transport backoffなし
 - application retry delayはprocess内best-effortのみ
 - DLQ / replay / purge / retentionなし
-- queue depth / oldest message ageなし
 - metrics backend / dashboard / 本番alert設定なし
 
 ## queue運用方針（Issue #109 / PR #110）
@@ -203,58 +259,54 @@ messageへ次を含めない。
 - DB processing leaseはcurrent attemptの実行所有権とcorrectnessを担う。
 - attempt idempotency keyはattempt単位のfencingを担う。
 - completion guardはsubmission終端保存の一意化を担う。
-- 外部queue導入後もDB processing lease / attempt fencing / completion guardを維持する。
+- external queue導入後もDB processing lease / attempt fencing / completion guardを維持する。
 
 ### retry
 - transport retryは同一message / 同一attemptの再配送であり、grading attemptを増やさない。
-- application retryは `retry_pending -> queued` でnew grading attempt / new keyを発行する。
+- application retryは`retry_pending -> queued`でnew grading attempt / new keyを発行する。
 - transport retryとapplication retryのbackoff設定を分離する。
 - queue delivery countをgrading attemptとして扱わない。
 
 ### DLQ
 - DLQはqueue messageの配送異常を隔離するinternal queueである。
-- DLQとsubmission statusの `infra_failed` を分離する。
-- Runtime failure、通常test failure、terminal済みduplicate、old attempt messageをDLQへ入れない。
-- replay前にDBのstatus / completion guard / attempt / keyを再検証する。
-- learnerはqueue / DLQ情報へアクセスできない。
+- DLQとsubmission statusの`infra_failed`を分離する。
+- runtime failure、通常test failure、terminal済みduplicate、old attempt messageをDLQへ入れない。
+- replay前にDB status / completion guard / attempt / keyを再検証する。
+- learnerはqueue / outbox / DLQ情報へアクセスできない。
 
 ### external queue migration
 - queue contract / portは現行HTTP behaviorを維持して導入済み。
 - queue transport observabilityはJSON Lines event contractとして導入済み。
 - application retry backoffはprocess内best-effort seamとして導入済み。
-- external queue導入時はtransactional outboxを推奨する。
-- rollout中はHTTP adapter、DB lease、stale scannerをrollback・safety netとして維持する。
-
-詳細:
-- `docs/reports/2026-07-23-queue-operations-visibility-dlq-backoff-design.md`
-- `docs/adr/2026-07-23-queue-delivery-and-db-fencing-boundary.md`
+- transactional outbox PoCは現行HTTP producerをpublish先として導入する。
+- 次段階でoutbox dispatcher配下へ実broker producer adapterを追加する。
+- rollout中はHTTP adapter、DB lease、queued recovery、stale scannerをrollback・safety netとして維持する。
 
 ## 採点ジョブ回復
 
 ### queued回収
-- Worker起動時にDB上の `queued` submissionを回収する。
-- `queued -> running` はsubmission id / grading attempt / attempt idempotency key / completion guard条件付きclaimで一件だけ成功させる。
+- Worker起動時にDB上の`queued` submissionを回収する。
+- `queued -> running`はsubmission ID / grading attempt / attempt idempotency key / completion guard条件付きclaimで一件だけ成功させる。
 
 ### processing lease / heartbeat
 - heartbeat feature flag有効時のclaimでprocessing leaseを開始する。
 - Workerは実行中にheartbeatを更新し、lease期限を延長する。
 - heartbeat・非終端更新・terminal保存はexpected attempt / attempt idempotency key / lease期限でfenceする。
-- lease期限切れ後のheartbeat・状態更新・terminal保存はno-opとする。
+- lease期限切れ後の更新はno-opとする。
 - completion guardはsubmission単位の終端一意化として維持する。
 
 ### stale running自動回収
-- 候補は `status = running` / completion guard未設定 / lease非NULL / lease期限切れに限定する。
-- leaseがNULLの `legacy_running` は自動回収しない。
-- recoveryはSQLiteの `BEGIN IMMEDIATE` transaction内で行う。
-- retry上限未満では `running -> retry_pending -> queued(new attempt/key)` を一貫処理する。
-- retry上限到達時はcompletion guardを設定して `infra_failed` へ終端化する。
-- 回収成功したnew attemptだけを共通queue producer portへ再投入する。
-- stale recovery再投入は現時点でapplication retry backoffの対象外とし、既存挙動を維持する。
-- 回収後の再投入失敗はqueued attempt専用fenced経路で `infra_failed` へ確定する。
+- 候補は`running` / completion guard未設定 / lease非NULL / lease期限切れに限定する。
+- leaseがNULLの`legacy_running`は自動回収しない。
+- recoveryはSQLite `BEGIN IMMEDIATE` transaction内で行う。
+- retry上限未満では`running -> retry_pending -> queued(new attempt/key)`を一貫処理する。
+- retry上限到達時はcompletion guardを設定して`infra_failed`へ終端化する。
+- stale recovery enqueueは現時点でapplication retry backoffとoutboxの対象外とし、既存挙動を維持する。
 
 ## データ管理
 - challenge本体: `challenges` + `challenge_versions`
 - submission: `submissions`
+- queue publish intent: `queue_outbox`
 - 永続化: SQLite（`.data/app.db`）
 - submission内部制御:
   - `grading_attempt`
@@ -263,16 +315,20 @@ messageへ次を含めない。
   - `processing_claimed_at`
   - `processing_heartbeat_at`
   - `processing_lease_expires_at`
-- Issue #115ではDB schema / migrationを変更しない。
-- external queue導入時のdual-write対策としてtransactional outboxを別Issueで検討する。
+- outbox内部制御:
+  - `status`
+  - `publish_attempts`
+  - `last_attempted_at`
+  - `last_error_type`
+  - `published_at`
 
 ## セキュリティ境界
 - learner-safeとinternalレスポンスを分離する。
 - hidden tests詳細はlearnerへ非公開とする。
-- `/api/admin/*` はadminロール必須とする。
-- attempt key、lease、heartbeat、worker識別情報、queue / DLQ情報はlearnerへ返さない。
+- `/api/admin/*`はadminロール必須とする。
+- attempt key、lease、heartbeat、worker識別情報、queue / outbox / DLQ情報はlearnerへ返さない。
 - queue message / event / logsへ提出コード本文・hidden tests実データ・secret・raw error messageを記録しない。
-- queue / DLQはprivate transportとservice-to-service認証を前提とする。
+- queue / outbox / DLQはprivate transportとservice-to-service認証を前提とする。
 
 ## 重要な不変条件
 - API本体で提出コードを直接実行しない。
@@ -280,15 +336,18 @@ messageへ次を含めない。
 - submissionの終端結果はcompletion guardで一意化する。
 - 旧attempt・期限切れleaseからの更新はattempt fencingで拒否する。
 - stale回収は同じattemptを再利用せず、必ずnew attemptとして扱う。
-- queue productのdeduplication機能だけに正しさを依存しない。
-- observability失敗で採点処理を失敗させない。
+- queue productやoutboxのdeduplication機能だけに正しさを依存しない。
+- observability失敗で採点・outbox処理を失敗させない。
 - delay失敗でsubmissionを中間状態へ残さず、即時enqueueへフォールバックする。
+- outbox insert失敗時はsubmissionもrollbackする。
+- outbox publish失敗時はpendingを維持する。
 - external queue導入後もDB lease / attempt fencing / completion guardを維持する。
 
 ## 依存関係と制約
 - 現行Runnerは簡易実行であり、将来は隔離強化が前提。
 - 現行queue transportは簡易HTTP連携であり、将来置換を想定する。
 - process内backoffはWorker再起動を越えて保持されない。
+- transactional outbox PoCのpublish先は現行HTTP adapterであり、broker durabilityは提供しない。
 - SQLite DB fileを複数ホストから共有する運用は前提にしない。
 - Repositoryのcanonical full nameは `mizzz-ivr/ai-code-dojo`。
 - ドキュメント正本は `docs/project-overview.md` のCanonical Source Rulesに従う。
@@ -301,4 +360,5 @@ messageへ次を含めない。
 - queue運用設計: `docs/reports/2026-07-23-queue-operations-visibility-dlq-backoff-design.md`
 - queue observability: `docs/runbooks/2026-07-24-queue-transport-observability-runbook.md`
 - application retry backoff: `docs/runbooks/2026-07-25-application-retry-backoff-runbook.md`
+- transactional outbox: `docs/runbooks/2026-07-25-transactional-outbox-runbook.md`
 - Worker障害復旧: `docs/runbooks/2026-05-18-worker-failure-recovery-runbook.md`
