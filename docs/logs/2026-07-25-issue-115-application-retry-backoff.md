@@ -11,6 +11,7 @@ Issue #113 / PR #114のmerge後処理を確認し、次のP1としてapplication
 - Current Issue: #115
 - Current PR: #116
 - Branch: `feat/application-retry-backoff`
+- PR状態: Draft（Ready化前の最終同期）
 
 ## Completed Tasks
 
@@ -24,10 +25,12 @@ Issue #113 / PR #114のmerge後処理を確認し、次のP1としてapplication
 - delay wait失敗時はstructured eventを記録して即時enqueueへフォールバックした。
 - queue event contractへdelay scheduled / failedとdelay関連fieldを追加した。
 - config / policy unit testを追加した。
-- Worker実経路のintegration testを追加した。
+- delay計算・event・待機・enqueue順序を確認する決定的なintegration testを追加した。
+- 既存`api-flow`でretry state machineと`infra_failed`終端経路の回帰を維持した。
 - current-status / active-issues / system-overviewを更新した。
 - application retry backoff専用runbookを追加した。
 - Draft PR #116を作成した。
+- 最終headでdocs validationと全app-qualityが成功した。
 
 ## Technical Decisions
 
@@ -51,6 +54,8 @@ Issue #113 / PR #114のmerge後処理を確認し、次のP1としてapplication
   - 対象範囲と回帰面積が増えるため不採用。
 - fixed delay案
   - 同時障害時の再投入集中を十分に分散できないため不採用。
+- 新規integrationでAPI / Worker processを追加起動し共有SQLiteへ依存する案
+  - 既存integration群と並列実行した際に別Workerがqueued rowをclaimし、event所有Workerが不定になるため不採用。
 
 ## Risks
 
@@ -63,26 +68,31 @@ Issue #113 / PR #114のmerge後処理を確認し、次のP1としてapplication
 
 ## Test Results
 
-初回app-qualityではintegration-testのみ失敗した。
+初期のprocess integration testは、既存integration群と`.data/app.db`を共有して複数Workerを並列起動するため、別Workerによるclaim競合で不安定になった。
 
+対応:
+
+- process / shared DB依存を除去した。
+- config + delay policy + queue event logger + injected sleepを統合して検証する決定的テストへ変更した。
+- event → sleep → enqueueの順序を固定した。
+- delay wait失敗時の一般化eventと即時enqueue fallbackを固定した。
+- retry状態遷移と終端経路は既存`tests/integration/api-flow.test.mjs`で継続確認した。
+
+最終headの結果:
+
+- docs validation: Success
 - lint: Success
 - typecheck: Success
-- unit: Success
+- unit test: Success
+- integration test: Success
 - schema validation: Success
-- integration: Failure
-
-同一headでintegration-testを再実行し成功した。既存integration群と共有SQLiteを使用する一時的競合と判断した。
-
-- integration rerun: Success
-- build: 実行確認中
-- docs validation: docs反映後の最終headで確認する
+- build: Success
 
 ## Remaining Tasks
 
-- AIプロンプトログ / handoffを追加する。
-- final headのdocs validation / app-qualityを確認する。
 - PR #116本文を完成させる。
 - PR #116をReady for reviewへ変更する。
+- active-issues / handoffのPR状態をReadyへ同期する。
 - Issue #115へ実装・テスト結果をコメントする。
 - Linear / Notion同期可否を確認する。
 - merge後にbranch cleanupを確認する。
