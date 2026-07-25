@@ -1,5 +1,8 @@
 import { enqueueSubmissionAttempt } from '../../../../packages/queue/src/submission-queue.mjs';
+import { loadQueueOutboxConfig } from '../config/queue-outbox-config.mjs';
 import { createSubmission, getSubmission } from '../repositories/submission-repository.mjs';
+import { createSubmissionWithQueueOutbox } from '../repositories/submission-outbox-repository.mjs';
+import { dispatchQueueOutboxBatch } from './queue-outbox-dispatcher.mjs';
 
 export { enqueueSubmissionAttempt };
 
@@ -11,13 +14,37 @@ export const validateSubmissionInput = (input) => {
   return true;
 };
 
-export const createSubmissionAndEnqueue = async (body) => {
+export const createSubmissionAndEnqueue = async (
+  body,
+  {
+    outboxConfig = loadQueueOutboxConfig(),
+    createWithOutbox = createSubmissionWithQueueOutbox,
+    dispatchOutbox = dispatchQueueOutboxBatch,
+    createLegacySubmission = createSubmission,
+    enqueueLegacy = enqueueSubmissionAttempt
+  } = {}
+) => {
   if (!validateSubmissionInput(body)) {
     return { error: '不正なsubmission入力です。challengeSlug/language/codeを確認してください。', statusCode: 400 };
   }
 
-  const submission = await createSubmission(body);
-  const enqueued = await enqueueSubmissionAttempt({
+  if (outboxConfig.enabled) {
+    const submission = await createWithOutbox(body);
+
+    try {
+      await dispatchOutbox({
+        limit: outboxConfig.batchSize,
+        trigger: 'submission'
+      });
+    } catch {
+      // The atomic outbox row remains pending and the periodic dispatcher retries it.
+    }
+
+    return { data: { id: submission.id, status: submission.status }, statusCode: 201 };
+  }
+
+  const submission = await createLegacySubmission(body);
+  const enqueued = await enqueueLegacy({
     submissionId: submission.id,
     gradingAttempt: submission.gradingAttempt,
     attemptIdempotencyKey: submission.attemptIdempotencyKey
