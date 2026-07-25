@@ -7,12 +7,13 @@ submission作成とqueue publish intentを同一SQLite transactionで保存し�
 - Issue: #117
 - PR: #118
 - Branch: `feat/transactional-outbox-poc`
-- PR状態: Draft
-- CI状態: 初回app-quality全成功、docs反映後のfinal head確認待ち
+- PR状態: Ready for review
+- CI状態: docs validation / app-quality 全成功
 
 ## Implemented
 - `queue_outbox` table
 - pending検索index
+- status / publish attemptのCHECK制約
 - `(submission_id, grading_attempt)` unique constraint
 - submission + outbox atomic transaction
 - outbox insert失敗時のrollback
@@ -47,6 +48,11 @@ submission作成とqueue publish intentを同一SQLite transactionで保存し�
 - `publish_attempts`
 - `last_attempted_at`
 - `last_error_type`
+
+制約:
+- statusは`pending`または`published`だけを許可する。
+- publish attemptsは0以上とする。
+- `(submission_id, grading_attempt)`を一意にする。
 
 `message_json`はqueue message contractだけを保持する。code / visible tests / hidden tests / secretを含めない。
 
@@ -104,15 +110,14 @@ publish失敗をlearner-facing 502へ変換しない。outbox情報をresponse�
 - environment variable値
 
 ## Test State
-初回head:
+最終headで以下が成功している。
+- docs validation: Success
 - lint: Success
 - typecheck: Success
 - unit: Success
 - integration: Success
 - schema validation: Success
 - build: Success
-
-追加実装・docs反映後にfinal headを再確認する。
 
 ## Review Focus
 - submission + outboxが同一transactionでcommit / rollbackされるか。
@@ -124,23 +129,20 @@ publish失敗をlearner-facing 502へ変換しない。outbox情報をresponse�
 - message / event / responseへ機微情報が混入していないか。
 - API startup / interval dispatcherが未処理Promiseを発生させないか。
 - migrationがlegacy DBで冪等か。
+- status / publish attemptsのCHECK制約が妥当か。
 - stale recovery / application retryへ不要な変更がないか。
 
 ## Risks
-- current HTTP 202はdurable broker ackではない。
+- 現行HTTP 202はdurable broker ackではない。
 - multi-process outbox claim / leaseは未実装。
-- multiple API processes can publish the same pending row.
+- 複数API processが同じpending rowを重複publishする可能性がある。
 - pending監視・retention・purgeは未実装。
 - feature flag有効時はpublish障害でも201となるため運用監視が必須。
 - SQLite multi-host共有は非対応。
 
 ## Remaining Tasks
-1. final headのdocs validation / app-qualityを確認する。
-2. PR #118本文を完成させる。
-3. PR #118をReady for reviewへ変更する。
-4. Issue #117へ実装・テスト結果をコメントする。
-5. Linear / Notion同期可否を確認する。
-6. merge後にbranch cleanupを確認する。
+1. PR #118をレビュー・mergeする。
+2. merge後にIssue #117の完了とbranch cleanupを確認する。
 
 ## Next Recommended Issue
 - external queue producer adapter / broker PoC
