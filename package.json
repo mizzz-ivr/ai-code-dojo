@@ -7,7 +7,7 @@
     "lint": "node scripts/lint.mjs",
     "typecheck": "node scripts/typecheck.mjs",
     "test:unit": "node --test tests/unit/**/*.test.mjs",
-    "test:integration": "node --test tests/integration/**/*.test.mjs",
+    "test:integration": "node scripts/run-integration-tests.mjs",
     "schema:validate": "node scripts/validate-problems.mjs",
     "build": "node scripts/build.mjs",
     "dev:api": "node apps/api/src/server.mjs",
