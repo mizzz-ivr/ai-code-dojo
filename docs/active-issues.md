@@ -1,6 +1,6 @@
 # active-issues（正本）
 
-最終更新: 2026-07-25（Issue #115 application retry backoffを実装中）
+最終更新: 2026-07-25（Issue #115 application retry backoffをレビュー中）
 
 ## この文書の目的
 進行中/未解決課題を、優先順位と依存関係付きで管理する。
@@ -14,9 +14,9 @@
 
 ### #115 application retryへexponential backoffとfull jitterの遅延ポリシーを追加する
 - 優先度: P1
-- 状態: Open / In Progress
+- 状態: Open / Review
 - GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/115`
-- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/116`（Draft）
+- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/116`（Ready for review）
 - 作業branch: `feat/application-retry-backoff`
 - 目的: infrastructure failure後のapplication retry再投入を設定可能なexponential backoff + full jitterで分散し、retry stormを抑制する。
 - 対象:
