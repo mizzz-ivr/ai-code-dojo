@@ -70,7 +70,7 @@ export const createSubmissionWithQueueOutbox = async (
       submission.attemptIdempotencyKey
     );
 
-    insertOutbox({
+    await insertOutbox({
       database,
       message,
       timestamp
