@@ -8,6 +8,21 @@ import {
 
 const defaultEventLogger = () => createQueueEventLogger({ service: 'api' });
 
+const logPublishFailure = ({
+  eventLogger,
+  row,
+  reason,
+  errorType
+}) => eventLogger.warn(QUEUE_EVENTS.OUTBOX_PUBLISH_FAILED, {
+  transport: 'http',
+  source: 'outbox',
+  submissionId: row.submissionId,
+  gradingAttempt: row.gradingAttempt,
+  outcome: 'pending',
+  reason,
+  errorType
+});
+
 export const dispatchQueueOutboxBatch = async ({
   limit = 25,
   trigger = 'manual',
@@ -38,17 +53,18 @@ export const dispatchQueueOutboxBatch = async ({
     const message = row.message;
     if (!message) {
       const errorType = row.messageErrorType ?? 'QueueOutboxMessageError';
-      await recordFailure(row.id, errorType);
+      try {
+        await recordFailure(row.id, errorType);
+        logPublishFailure({ eventLogger, row, reason: 'invalid_message', errorType });
+      } catch (error) {
+        logPublishFailure({
+          eventLogger,
+          row,
+          reason: 'failure_state_update_failed',
+          errorType: error?.name ?? 'QueueOutboxUpdateError'
+        });
+      }
       summary.failed += 1;
-      eventLogger.warn(QUEUE_EVENTS.OUTBOX_PUBLISH_FAILED, {
-        transport: 'http',
-        source: 'outbox',
-        submissionId: row.submissionId,
-        gradingAttempt: row.gradingAttempt,
-        outcome: 'pending',
-        reason: 'invalid_message',
-        errorType
-      });
       continue;
     }
 
@@ -68,30 +84,41 @@ export const dispatchQueueOutboxBatch = async ({
     }
 
     if (!enqueued) {
-      await recordFailure(row.id, errorType);
+      try {
+        await recordFailure(row.id, errorType);
+        logPublishFailure({ eventLogger, row, reason: 'enqueue_failed', errorType });
+      } catch (error) {
+        logPublishFailure({
+          eventLogger,
+          row,
+          reason: 'failure_state_update_failed',
+          errorType: error?.name ?? 'QueueOutboxUpdateError'
+        });
+      }
       summary.failed += 1;
-      eventLogger.warn(QUEUE_EVENTS.OUTBOX_PUBLISH_FAILED, {
+      continue;
+    }
+
+    try {
+      const published = await markPublished(row.id);
+      summary.published += 1;
+      eventLogger.info(QUEUE_EVENTS.OUTBOX_PUBLISH_SUCCEEDED, {
         transport: 'http',
         source: 'outbox',
         submissionId: row.submissionId,
         gradingAttempt: row.gradingAttempt,
-        outcome: 'pending',
-        reason: 'enqueue_failed',
-        errorType
+        outcome: published ? 'published' : 'duplicate_publish',
+        noOp: !published
       });
-      continue;
+    } catch (error) {
+      summary.failed += 1;
+      logPublishFailure({
+        eventLogger,
+        row,
+        reason: 'publish_state_update_failed',
+        errorType: error?.name ?? 'QueueOutboxUpdateError'
+      });
     }
-
-    const published = await markPublished(row.id);
-    summary.published += 1;
-    eventLogger.info(QUEUE_EVENTS.OUTBOX_PUBLISH_SUCCEEDED, {
-      transport: 'http',
-      source: 'outbox',
-      submissionId: row.submissionId,
-      gradingAttempt: row.gradingAttempt,
-      outcome: published ? 'published' : 'duplicate_publish',
-      noOp: !published
-    });
   }
 
   eventLogger.info(QUEUE_EVENTS.OUTBOX_DISPATCH_COMPLETED, {
@@ -135,6 +162,16 @@ export const startQueueOutboxDispatcher = ({
         trigger: source,
         eventLogger
       });
+    } catch (error) {
+      const errorType = error?.name ?? 'QueueOutboxDispatchError';
+      eventLogger.error(QUEUE_EVENTS.OUTBOX_DISPATCH_FAILED, {
+        source: 'outbox',
+        trigger: source,
+        outcome: 'failed',
+        reason: 'unexpected_dispatch_error',
+        errorType
+      });
+      return { scanned: 0, published: 0, failed: 1, errorType };
     } finally {
       running = false;
     }
