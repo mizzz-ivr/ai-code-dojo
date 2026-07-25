@@ -7,12 +7,13 @@ PR #116のmergeとIssue #115の完了を確認し、次のP2としてsubmission�
 - Issue: #117
 - PR: #118
 - Branch: `feat/transactional-outbox-poc`
-- PR状態: Draft
+- PR状態: Ready for review
 
 ## Completed Tasks
 - PR #116がmerged、Issue #115がClosed / Completedであることを確認した。
 - outbox / external queue関連のopen Issueがないことを確認し、Issue #117を作成した。
 - `queue_outbox` tableとpending検索indexを追加した。
+- status / publish attemptsのCHECK制約を追加した。
 - `(submission_id, grading_attempt)` unique constraintを追加した。
 - submission + outbox atomic transaction repositoryを追加した。
 - transaction途中のoutbox insert失敗時にsubmissionもrollbackするよう実装した。
@@ -26,7 +27,9 @@ PR #116のmergeとIssue #115の完了を確認し、次のP2としてsubmission�
 - migration / config / atomic transaction / dispatcher / service / integration testを追加した。
 - current-status / active-issues / system-overviewを更新した。
 - transactional outbox運用runbookを追加した。
-- Draft PR #118を作成した。
+- AIプロンプトログ / handoffを追加した。
+- Draft PR #118を作成し、主要差分レビューを実施した。
+- 最終headで全品質ゲートとdocs validationの成功を確認した。
 
 ## Technical Decisions
 - outbox feature flag無効時はlegacyのsubmission保存→同期HTTP enqueueと502挙動を維持する。
@@ -61,8 +64,9 @@ PR #116のmergeとIssue #115の完了を確認し、次のP2としてsubmission�
 - SQLiteを複数ホストで共有する運用は非対応。
 
 ## Test Results
-初回headで以下が成功した。
+最終headで以下が成功した。
 
+- docs validation: Success
 - lint: Success
 - typecheck: Success
 - unit: Success
@@ -70,16 +74,9 @@ PR #116のmergeとIssue #115の完了を確認し、次のP2としてsubmission�
 - schema validation: Success
 - build: Success
 
-追加のdispatcher例外処理とdocs反映後、final headで再確認する。
-
 ## Remaining Tasks
-- AIプロンプトログ / handoffを追加する。
-- final headのdocs validation / app-qualityを確認する。
-- PR #118本文を完成させる。
-- PR #118をReady for reviewへ変更する。
-- Issue #117へ実装・テスト結果をコメントする。
-- Linear / Notion同期可否を確認する。
-- merge後にbranch cleanupを確認する。
+- PR #118をレビュー・mergeする。
+- merge後にIssue #117の完了とbranch cleanupを確認する。
 
 ## Suggested Next Actions
 1. PR #118をレビュー・mergeする。
