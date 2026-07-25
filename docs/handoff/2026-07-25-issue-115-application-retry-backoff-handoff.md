@@ -9,14 +9,12 @@ application retryのnew attempt作成後からHTTP enqueueまでへ、feature fl
 - Issue: #115
 - PR: #116
 - Branch: `feat/application-retry-backoff`
-- PR状態: Draft
-- CI状態: docs反映後の最終head確認中
+- PR状態: Draft（Ready化前）
+- CI状態: docs validation / app-quality 全成功
 
 ## Implemented
 
-- `apps/worker/src/config/application-retry-backoff-config.mjs`
-- `apps/worker/src/services/application-retry-backoff.mjs`
-- feature flag / base delay / max delay validation
+- application retry backoff設定と起動時validation
 - retry ordinalに基づくexponential cap
 - full jitter
 - injectable random / sleep
@@ -26,7 +24,8 @@ application retryのnew attempt作成後からHTTP enqueueまでへ、feature fl
 - `queue.retry.delay_failed`
 - delay関連field allowlist
 - config / policy unit test
-- Worker実経路integration test
+- 決定的なintegration test
+- 既存API retry / terminal回帰テスト維持
 - current-status / active-issues / system-overview更新
 - application retry backoff runbook
 - 作業ログ / AIプロンプトログ / handoff
@@ -55,9 +54,9 @@ delayMs = floor(capDelayMs * random())
 - delay失敗時は即時enqueueへフォールバックする。
 - stale recovery enqueueは本Issueのbackoff対象外。
 
-## Security Boundary
+## Event Boundary
 
-出力可能:
+記録可能:
 
 - submission ID
 - previous / next attempt
@@ -66,57 +65,60 @@ delayMs = floor(capDelayMs * random())
 - backoff enabled
 - generalized outcome / reason / error type
 
-出力禁止:
+記録しない:
 
-- code
-- visible / hidden tests詳細
-- secret / token / password
+- submitted source
+- test details
+- credentials
 - attempt idempotency key
 - raw error message
-- environment variable値
+- environment variable values
 
 ## Test State
 
-初回app-quality:
-
-- lint: Success
-- typecheck: Success
-- unit: Success
-- schema validation: Success
-- integration: Failure
-
-同一headでintegrationを再実行しSuccess。共有SQLiteを利用するintegration群の一時的競合と判断した。
-
-最終docs反映後に以下を再確認する。
+最終headで以下が成功している。
 
 - docs validation
 - lint
 - typecheck
-- unit
-- integration
+- unit test
+- integration test
 - schema validation
 - build
 
+### Integration test改善
+
+初期のprocess integration testは複数テストが同一SQLiteを利用するため、別Workerによるqueued row claimで不安定になった。
+
+修正後はprocess / shared DB依存を除去し、config、delay policy、queue event logger、injected sleepを統合した決定的テストで次を確認する。
+
+- event → sleep → enqueueの順序
+- delay計算
+- event field制限
+- wait失敗時の即時fallback
+
+serverのretry状態遷移と`infra_failed`終端は既存`api-flow`で継続確認する。
+
 ## Review Focus
 
-- retry ordinalとcap計算が既存attempt semanticsと一致するか。
-- feature flag無効時に現行即時enqueueを維持するか。
-- new attempt作成後にdelayする判断がcorrectness上安全か。
-- Worker再起動でdelayが短絡するbest-effort境界が許容できるか。
-- delay wait失敗時の即時fallbackが妥当か。
-- event allowlistへ機微情報が混入していないか。
-- stale recoveryへ不要なbackoffが混在していないか。
-- DB schema / migration / seed変更がないか。
+- retry ordinalとcap計算
+- feature flag無効時の即時enqueue
+- new attempt作成後にdelayするcorrectness
+- Worker再起動でdelayが短絡するbest-effort境界
+- delay wait失敗時のfallback
+- event field制限
+- stale recoveryへの非適用
+- DB schema変更がないこと
+- integration testが共有SQLiteへ依存しないこと
 
 ## Remaining Tasks
 
-1. final headのdocs validation / app-qualityを確認する。
-2. 作業ログ / handoffへ最終CI結果を確定する。
-3. PR #116本文を完成させる。
-4. PR #116をReady for reviewへ変更する。
-5. Issue #115へ実装・テスト結果をコメントする。
-6. Linear / Notion同期可否を確認する。
-7. merge後にbranch cleanupを確認する。
+1. PR #116本文を完成させる。
+2. PR #116をReady for reviewへ変更する。
+3. active-issues / handoffのPR状態をReadyへ同期する。
+4. Issue #115へ実装・テスト結果をコメントする。
+5. Linear / Notion同期可否を確認する。
+6. merge後にbranch cleanupを確認する。
 
 ## Next Recommended Issue
 
@@ -124,5 +126,3 @@ delayMs = floor(capDelayMs * random())
 - durable application retry scheduling
 - DLQ ops / replay / purge
 - queue metrics backend / dashboard / alert接続
-
-本Issueへtransport retry、external queue、outbox、DLQ ops、metrics backend、Runner変更を混在させない。
