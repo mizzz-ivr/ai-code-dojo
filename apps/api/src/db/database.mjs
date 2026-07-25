@@ -87,7 +87,24 @@ const migrateSchema = (database) => {
       processing_lease_expires_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS queue_outbox (
+      id TEXT PRIMARY KEY,
+      submission_id TEXT NOT NULL,
+      grading_attempt INTEGER NOT NULL,
+      message_json TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      published_at TEXT,
+      publish_attempts INTEGER NOT NULL DEFAULT 0,
+      last_attempted_at TEXT,
+      last_error_type TEXT,
+      UNIQUE(submission_id, grading_attempt),
+      FOREIGN KEY(submission_id) REFERENCES submissions(id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_challenges_slug_status ON challenges(slug, status);
+    CREATE INDEX IF NOT EXISTS idx_queue_outbox_pending ON queue_outbox(status, created_at);
   `);
 
   ensureSubmissionColumns(database);
