@@ -9,7 +9,7 @@ application retryのnew attempt作成後からHTTP enqueueまでへ、feature fl
 - Issue: #115
 - PR: #116
 - Branch: `feat/application-retry-backoff`
-- PR状態: Draft（Ready化前）
+- PR状態: Ready for review
 - CI状態: docs validation / app-quality 全成功
 
 ## Implemented
@@ -113,12 +113,10 @@ serverのretry状態遷移と`infra_failed`終端は既存`api-flow`で継続確
 
 ## Remaining Tasks
 
-1. PR #116本文を完成させる。
-2. PR #116をReady for reviewへ変更する。
-3. active-issues / handoffのPR状態をReadyへ同期する。
-4. Issue #115へ実装・テスト結果をコメントする。
-5. Linear / Notion同期可否を確認する。
-6. merge後にbranch cleanupを確認する。
+1. PR #116をレビュー・mergeする。
+2. Issue #115へ実装・テスト結果をコメントする。
+3. Linear / Notionを同期する。
+4. merge後にbranch cleanupを確認する。
 
 ## Next Recommended Issue
 
