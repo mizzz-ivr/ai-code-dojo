@@ -1,6 +1,6 @@
 # system-overview（正本）
 
-最終更新: 2026-07-24（Issue #113 queue transport observabilityを反映）
+最終更新: 2026-07-25（Issue #115 application retry backoffを反映）
 
 ## この文書の目的
 実装詳細に入る前に、システム境界・責務分担・データフローを把握するためのアーキテクチャ概観を提供する。
@@ -11,7 +11,7 @@
 - Queue contract / port: version付きmessage、producer / consumer共通validation、transport差し替え境界
 - Queue transport: 現行HTTP通知、将来のdurable delivery / visibility / ack / retry / DLQ
 - Queue observability: allowlist fieldのJSON Lines event、将来metrics / alertへ変換する監視契約
-- Worker: 採点ジョブのclaim、実行、heartbeat、stale scanner、結果保存、障害回復
+- Worker: 採点ジョブのclaim、実行、heartbeat、application retry backoff、stale scanner、結果保存、障害回復
 - Runner: テスト実行と結果正規化
 
 ## 高レベル構成
@@ -24,10 +24,12 @@
 7. Workerが共通message contractでrequestを検証し、delivery eventを記録する。
 8. WorkerがDB上のsubmissionを条件付きclaimし、claim eventを記録する。
 9. heartbeat有効時はWorkerがprocessing leaseを定期延長する。
-10. stale recovery有効時はWorkerが起動時・定期的に期限切れleaseを走査する。
-11. WorkerがRunnerでvisible/hidden testsを実行する。
-12. Workerがexpected attempt/keyによるfenced updateとcompletion guardで結果を保存する。
-13. Webがsubmission結果をポーリング表示する。
+10. WorkerがRunnerでvisible/hidden testsを実行する。
+11. infrastructure failure時はretry上限を確認し、new attemptを作成する。
+12. application retry backoff有効時はnew attemptのHTTP enqueue前にfull jitter delayを適用する。
+13. stale recovery有効時はWorkerが起動時・定期的に期限切れleaseを走査する。
+14. Workerがexpected attempt/keyによるfenced updateとcompletion guardで結果を保存する。
+15. Webがsubmission結果をポーリング表示する。
 
 ## queue message contract（Issue #111 / PR #112）
 
@@ -88,6 +90,7 @@ messageへ次を含めない。
 許可するcontext例:
 - transport / source / outcome / reason
 - submission id / grading attempt / previous attempt / next attempt
+- retry ordinal / delay / cap / backoff enabled
 - optional correlation id / schema version / HTTP status code
 - trigger / scan件数 / recovery集計
 - generalized error type
@@ -105,7 +108,7 @@ messageへ次を含めない。
 - `queue.delivery.*`: Worker `/jobs`のaccepted / rejected
 - `queue.claim.*`: DB conditional claimのsuccess / no-op
 - `queue.heartbeat.failed`: heartbeat更新失敗
-- `queue.retry.*`: retry pending、新attempt開始、再投入、終端化
+- `queue.retry.*`: retry pending、新attempt開始、delay、再投入、終端化
 - `queue.queued_recovery.*`: Worker起動時queued回収
 - `queue.stale_recovery.*`: candidate回収、再投入失敗、scan summary
 
@@ -116,12 +119,48 @@ messageへ次を含めない。
 - `queue_delivery_total{outcome,reason}`
 - `queue_claim_total{outcome,reason}`
 - `queue_retry_total{event,outcome,reason}`
+- `queue_retry_delay_ms`
 - `queue_recovery_total{event,outcome,reason}`
 - `queue_heartbeat_failure_total`
 - `queue_stale_scan_candidates_total`
 - `queue_stale_scan_errors_total`
 
-本Issueではmetrics endpoint、backend、dashboard、alert本番設定を追加しない。
+現時点ではmetrics endpoint、backend、dashboard、alert本番設定を追加しない。
+
+## application retry backoff（Issue #115 / PR #116）
+
+### 責務
+- application retryはinfrastructure failure後にnew grading attempt / new attempt keyを作成する。
+- backoffはnew attempt作成後からHTTP enqueueまでの待機だけを担う。
+- transport retryやqueue delivery countには適用しない。
+- grading attempt上限は既存 `WORKER_MAX_INFRA_RETRY_ATTEMPTS` を正本とする。
+
+### 設定
+- `WORKER_APPLICATION_RETRY_BACKOFF_ENABLED=1` で有効化する。
+- `WORKER_APPLICATION_RETRY_BASE_DELAY_MS` の既定値は5000ms。
+- `WORKER_APPLICATION_RETRY_MAX_DELAY_MS` の既定値は60000ms。
+- base / maxは正の整数とし、maxはbase以上とする。
+- feature flag無効時はdelay 0msで現行の即時enqueueを維持する。
+
+### delay policy
+- `retryOrdinal = nextAttempt - 2` とする。
+- `capDelayMs = min(maxDelayMs, baseDelayMs * 2^retryOrdinal)` とする。
+- `delayMs = floor(capDelayMs * random())` のfull jitterを使用する。
+- random / sleepを注入可能にし、実時間待機なしでunit testする。
+- delay waitが失敗した場合は一般化eventを記録し、即時enqueueへフォールバックする。
+
+### correctness境界
+- new attempt / new keyはdelay前にDBへ確定する。
+- delay中のsubmission statusは `queued` とする。
+- 別WorkerやWorker再起動時queued回収が先にclaimした場合、後続HTTP deliveryは既存のattempt fencing / conditional claimでno-opになる。
+- process内delayはbest-effortであり、durable delayed deliveryではない。
+- Worker再起動時queued回収はavailability safety netとしてdelayを短絡し得る。
+- durableな再試行時刻が必要な場合はexternal queue delayed deliveryまたは永続化された`next_retry_at`を別Issueで設計する。
+
+### observability
+- `queue.retry.delay_scheduled` にretry ordinal / delay / cap / enabled状態を記録する。
+- `queue.retry.delay_failed` に一般化reason / error typeを記録する。
+- attempt key、code、hidden tests、secret、raw error messageを記録しない。
 
 ## 現行queue transport
 
@@ -140,7 +179,8 @@ messageへ次を含めない。
 - ack / nackなし
 - queue visibility timeoutなし
 - delivery countなし
-- delayed delivery / backoffなし
+- transport delayed delivery / transport backoffなし
+- application retry delayはprocess内best-effortのみ
 - DLQ / replay / purge / retentionなし
 - queue depth / oldest message ageなし
 - metrics backend / dashboard / 本番alert設定なし
@@ -181,7 +221,7 @@ messageへ次を含めない。
 ### external queue migration
 - queue contract / portは現行HTTP behaviorを維持して導入済み。
 - queue transport observabilityはJSON Lines event contractとして導入済み。
-- application retry backoff seamを次に実装する。
+- application retry backoffはprocess内best-effort seamとして導入済み。
 - external queue導入時はtransactional outboxを推奨する。
 - rollout中はHTTP adapter、DB lease、stale scannerをrollback・safety netとして維持する。
 
@@ -209,6 +249,7 @@ messageへ次を含めない。
 - retry上限未満では `running -> retry_pending -> queued(new attempt/key)` を一貫処理する。
 - retry上限到達時はcompletion guardを設定して `infra_failed` へ終端化する。
 - 回収成功したnew attemptだけを共通queue producer portへ再投入する。
+- stale recovery再投入は現時点でapplication retry backoffの対象外とし、既存挙動を維持する。
 - 回収後の再投入失敗はqueued attempt専用fenced経路で `infra_failed` へ確定する。
 
 ## データ管理
@@ -222,7 +263,7 @@ messageへ次を含めない。
   - `processing_claimed_at`
   - `processing_heartbeat_at`
   - `processing_lease_expires_at`
-- Issue #113ではDB schema / migrationを変更しない。
+- Issue #115ではDB schema / migrationを変更しない。
 - external queue導入時のdual-write対策としてtransactional outboxを別Issueで検討する。
 
 ## セキュリティ境界
@@ -241,11 +282,13 @@ messageへ次を含めない。
 - stale回収は同じattemptを再利用せず、必ずnew attemptとして扱う。
 - queue productのdeduplication機能だけに正しさを依存しない。
 - observability失敗で採点処理を失敗させない。
+- delay失敗でsubmissionを中間状態へ残さず、即時enqueueへフォールバックする。
 - external queue導入後もDB lease / attempt fencing / completion guardを維持する。
 
 ## 依存関係と制約
 - 現行Runnerは簡易実行であり、将来は隔離強化が前提。
 - 現行queue transportは簡易HTTP連携であり、将来置換を想定する。
+- process内backoffはWorker再起動を越えて保持されない。
 - SQLite DB fileを複数ホストから共有する運用は前提にしない。
 - Repositoryのcanonical full nameは `mizzz-ivr/ai-code-dojo`。
 - ドキュメント正本は `docs/project-overview.md` のCanonical Source Rulesに従う。
@@ -256,4 +299,6 @@ messageへ次を含めない。
 - 現在状態: `docs/current-status.md`
 - 進行中Issue: `docs/active-issues.md`
 - queue運用設計: `docs/reports/2026-07-23-queue-operations-visibility-dlq-backoff-design.md`
+- queue observability: `docs/runbooks/2026-07-24-queue-transport-observability-runbook.md`
+- application retry backoff: `docs/runbooks/2026-07-25-application-retry-backoff-runbook.md`
 - Worker障害復旧: `docs/runbooks/2026-05-18-worker-failure-recovery-runbook.md`
