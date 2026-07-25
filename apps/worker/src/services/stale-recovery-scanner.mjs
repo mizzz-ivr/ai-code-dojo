@@ -4,6 +4,7 @@ import {
 } from '../../../api/src/repositories/stale-submission-recovery-repository.mjs';
 import { finalizeQueuedAttemptAsInfraFailed } from '../../../api/src/repositories/submission-repository.mjs';
 import { enqueueSubmissionAttempt } from '../../../api/src/services/submission-service.mjs';
+import { createQueueEventLogger, QUEUE_EVENTS } from '../../../../packages/queue/src/queue-event-logger.mjs';
 
 const createInfraFailureResult = (message) => ({
   status: 'infra_failed',
@@ -19,6 +20,21 @@ const defaultDependencies = {
   recoverStaleRunningSubmission,
   enqueueSubmissionAttempt,
   finalizeQueuedAttemptAsInfraFailed
+};
+
+const createCompatibleEventLogger = (eventLogger, logger) => {
+  if (eventLogger) return eventLogger;
+
+  return createQueueEventLogger({
+    service: 'worker',
+    writeLine: (level, line) => {
+      if (level === 'error') {
+        logger.error?.(line);
+        return;
+      }
+      logger.log?.(line);
+    }
+  });
 };
 
 const runWithConcurrency = async (items, concurrency, handler) => {
@@ -40,8 +56,10 @@ export const runStaleRecoveryScan = async ({
   retryEnqueueBaseUrl,
   timestamp = new Date().toISOString(),
   logger = console,
+  eventLogger,
   dependencies = defaultDependencies
 }) => {
+  const observability = createCompatibleEventLogger(eventLogger, logger);
   const candidates = await dependencies.listStaleRunningSubmissions({
     timestamp,
     limit: config.batchSize
@@ -74,12 +92,11 @@ export const runStaleRecoveryScan = async ({
 
       if (recovered.action === 'infra_failed') {
         summary.terminalized += 1;
-        logger.log('stale submission recovery completed', {
+        observability.error(QUEUE_EVENTS.STALE_RECOVERY_COMPLETED, {
           submissionId: candidate.id,
           previousAttempt: recovered.previousAttempt,
-          action: 'infra_failed',
-          reason: 'lease_expired',
-          timestamp
+          outcome: 'infra_failed',
+          reason: 'lease_expired'
         });
         return;
       }
@@ -88,18 +105,19 @@ export const runStaleRecoveryScan = async ({
         submissionId: recovered.submission.id,
         gradingAttempt: recovered.submission.gradingAttempt,
         attemptIdempotencyKey: recovered.submission.attemptIdempotencyKey,
-        runnerApiBaseUrl: retryEnqueueBaseUrl
+        runnerApiBaseUrl: retryEnqueueBaseUrl,
+        eventLogger: observability,
+        source: 'stale_recovery'
       });
 
       if (enqueued) {
         summary.requeued += 1;
-        logger.log('stale submission recovery completed', {
+        observability.info(QUEUE_EVENTS.STALE_RECOVERY_COMPLETED, {
           submissionId: candidate.id,
           previousAttempt: recovered.previousAttempt,
           nextAttempt: recovered.submission.gradingAttempt,
-          action: 'requeued',
-          reason: 'lease_expired',
-          timestamp
+          outcome: 'requeued',
+          reason: 'lease_expired'
         });
         return;
       }
@@ -116,24 +134,24 @@ export const runStaleRecoveryScan = async ({
 
       if (finalized) {
         summary.enqueueFailedFinalized += 1;
-        logger.error('stale submission recovery enqueue failed', {
+        observability.error(QUEUE_EVENTS.STALE_RECOVERY_ENQUEUE_FAILED, {
           submissionId: candidate.id,
           previousAttempt: recovered.previousAttempt,
           nextAttempt: recovered.submission.gradingAttempt,
-          action: 'infra_failed',
-          reason: 'enqueue_failed',
-          timestamp
+          outcome: 'infra_failed',
+          reason: 'enqueue_failed'
         });
       } else {
         summary.noOp += 1;
       }
     } catch (error) {
       summary.errors += 1;
-      logger.error('stale submission recovery candidate failed', {
+      observability.error(QUEUE_EVENTS.STALE_RECOVERY_CANDIDATE_FAILED, {
         submissionId: candidate.id,
         gradingAttempt: candidate.gradingAttempt,
-        message: error.message,
-        timestamp
+        outcome: 'failed',
+        reason: 'candidate_processing_failed',
+        errorType: error?.name ?? 'Error'
       });
     }
   });
@@ -146,6 +164,7 @@ export const startStaleRecoveryScanner = ({
   maxInfraRetryAttempts,
   retryEnqueueBaseUrl,
   logger = console,
+  eventLogger,
   dependencies = defaultDependencies
 }) => {
   if (!config.enabled) {
@@ -155,6 +174,7 @@ export const startStaleRecoveryScanner = ({
     };
   }
 
+  const observability = createCompatibleEventLogger(eventLogger, logger);
   let scanRunning = false;
   const run = async (trigger = 'manual') => {
     if (scanRunning) {
@@ -167,17 +187,23 @@ export const startStaleRecoveryScanner = ({
         config,
         maxInfraRetryAttempts,
         retryEnqueueBaseUrl,
-        logger,
+        eventLogger: observability,
         dependencies
       });
-      if (summary.scanned > 0 || summary.errors > 0) {
-        logger.log('stale submission recovery scan completed', { trigger, ...summary });
+      if (summary.scanned > 0 || summary.errors > 0 || trigger === 'startup') {
+        observability.info(QUEUE_EVENTS.STALE_RECOVERY_SCAN_COMPLETED, {
+          trigger,
+          outcome: 'completed',
+          ...summary
+        });
       }
       return summary;
     } catch (error) {
-      logger.error('stale submission recovery scan failed', {
+      observability.error(QUEUE_EVENTS.STALE_RECOVERY_SCAN_FAILED, {
         trigger,
-        message: error.message
+        outcome: 'failed',
+        reason: 'scan_failed',
+        errorType: error?.name ?? 'Error'
       });
       return { error: true, message: error.message };
     } finally {

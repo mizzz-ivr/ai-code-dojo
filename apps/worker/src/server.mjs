@@ -2,6 +2,7 @@ import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parseSubmissionQueueMessage } from '../../../packages/queue/src/message-contract.mjs';
+import { createQueueEventLogger, QUEUE_EVENTS } from '../../../packages/queue/src/queue-event-logger.mjs';
 import { getChallengeBasePath } from '../../api/src/repositories/challenge-repository.mjs';
 import {
   claimSubmissionForProcessing,
@@ -27,6 +28,7 @@ const processingLeaseConfig = getProcessingLeaseConfig(process.env);
 const staleRecoveryConfig = getStaleRecoveryConfig(process.env, {
   heartbeatEnabled: processingLeaseConfig.enabled
 });
+const queueEventLogger = createQueueEventLogger({ service: 'worker' });
 
 if (useIsolationPoc && isProduction) {
   throw new Error('RUNNER_ISOLATION_POC must not be enabled in production.');
@@ -76,11 +78,13 @@ const createHeartbeatController = (submission) => {
         leaseDurationMs: processingLeaseConfig.leaseDurationMs
       });
       if (!updated) ownsLease = false;
-    } catch {
+    } catch (error) {
       ownsLease = false;
-      console.error('submission heartbeat failed', {
+      queueEventLogger.error(QUEUE_EVENTS.HEARTBEAT_FAILED, {
         submissionId: submission.id,
-        gradingAttempt: submission.gradingAttempt
+        gradingAttempt: submission.gradingAttempt,
+        reason: 'heartbeat_update_failed',
+        errorType: error?.name ?? 'Error'
       });
     } finally {
       heartbeatRunning = false;
@@ -102,7 +106,7 @@ const handleInfrastructureFailure = async ({ submissionId, submission, error }) 
   const expectedAttempt = getExpectedAttempt(submission);
 
   if (!shouldRetryInfraFailure(submission.gradingAttempt ?? 1)) {
-    await updateSubmissionForAttempt(submissionId, {
+    const terminalized = await updateSubmissionForAttempt(submissionId, {
       status: 'infra_failed',
       result: {
         status: 'infra_failed',
@@ -113,6 +117,14 @@ const handleInfrastructureFailure = async ({ submissionId, submission, error }) 
         artifacts: []
       }
     }, expectedAttempt);
+    if (terminalized) {
+      queueEventLogger.error(QUEUE_EVENTS.RETRY_TERMINALIZED, {
+        submissionId,
+        gradingAttempt: submission.gradingAttempt,
+        outcome: 'infra_failed',
+        reason: 'max_attempts_reached'
+      });
+    }
     return;
   }
 
@@ -121,40 +133,109 @@ const handleInfrastructureFailure = async ({ submissionId, submission, error }) 
     { status: 'retry_pending' },
     expectedAttempt
   );
-  if (!retryPending) return;
+  if (!retryPending) {
+    queueEventLogger.warn(QUEUE_EVENTS.RETRY_PENDING, {
+      submissionId,
+      gradingAttempt: submission.gradingAttempt,
+      outcome: 'no_op',
+      reason: 'conditional_update_failed'
+    });
+    return;
+  }
+
+  queueEventLogger.info(QUEUE_EVENTS.RETRY_PENDING, {
+    submissionId,
+    gradingAttempt: submission.gradingAttempt,
+    outcome: 'updated',
+    reason: 'infrastructure_failure'
+  });
 
   const retriedSubmission = await startRetryAttempt(submissionId, expectedAttempt);
-  if (!retriedSubmission) return;
+  if (!retriedSubmission) {
+    queueEventLogger.warn(QUEUE_EVENTS.RETRY_STARTED, {
+      submissionId,
+      gradingAttempt: submission.gradingAttempt,
+      outcome: 'no_op',
+      reason: 'conditional_start_failed'
+    });
+    return;
+  }
+
+  queueEventLogger.info(QUEUE_EVENTS.RETRY_STARTED, {
+    submissionId,
+    previousAttempt: submission.gradingAttempt,
+    nextAttempt: retriedSubmission.gradingAttempt,
+    outcome: 'queued'
+  });
 
   const enqueued = await enqueueSubmissionAttempt({
     submissionId,
     gradingAttempt: retriedSubmission.gradingAttempt,
     attemptIdempotencyKey: retriedSubmission.attemptIdempotencyKey,
-    runnerApiBaseUrl: retryEnqueueBaseUrl
+    runnerApiBaseUrl: retryEnqueueBaseUrl,
+    eventLogger: queueEventLogger,
+    source: 'application_retry'
   });
 
-  if (!enqueued) {
-    await finalizeQueuedAttemptAsInfraFailed(
+  if (enqueued) {
+    queueEventLogger.info(QUEUE_EVENTS.RETRY_ENQUEUE_SUCCEEDED, {
       submissionId,
-      {
-        status: 'infra_failed',
-        score: 0,
-        durationMs: 0,
-        logs: ['Retryジョブの再投入に失敗しました。'],
-        testResults: [],
-        artifacts: []
-      },
-      getExpectedAttempt(retriedSubmission)
-    );
+      gradingAttempt: retriedSubmission.gradingAttempt,
+      outcome: 'accepted'
+    });
+    return;
+  }
+
+  queueEventLogger.error(QUEUE_EVENTS.RETRY_ENQUEUE_FAILED, {
+    submissionId,
+    gradingAttempt: retriedSubmission.gradingAttempt,
+    outcome: 'failed',
+    reason: 'enqueue_failed'
+  });
+
+  const finalized = await finalizeQueuedAttemptAsInfraFailed(
+    submissionId,
+    {
+      status: 'infra_failed',
+      score: 0,
+      durationMs: 0,
+      logs: ['Retryジョブの再投入に失敗しました。'],
+      testResults: [],
+      artifacts: []
+    },
+    getExpectedAttempt(retriedSubmission)
+  );
+
+  if (finalized) {
+    queueEventLogger.error(QUEUE_EVENTS.RETRY_TERMINALIZED, {
+      submissionId,
+      gradingAttempt: retriedSubmission.gradingAttempt,
+      outcome: 'infra_failed',
+      reason: 'enqueue_failed'
+    });
   }
 };
 
 const processSubmission = async ({ submissionId, gradingAttempt, attemptIdempotencyKey }) => {
   const current = await getSubmission(submissionId);
-  if (!current) return;
+  if (!current) {
+    queueEventLogger.info(QUEUE_EVENTS.CLAIM_NOOP, {
+      submissionId,
+      gradingAttempt,
+      outcome: 'no_op',
+      reason: 'submission_not_found'
+    });
+    return;
+  }
 
   if (typeof gradingAttempt === 'number' && attemptIdempotencyKey) {
     if (current.gradingAttempt !== gradingAttempt || current.attemptIdempotencyKey !== attemptIdempotencyKey) {
+      queueEventLogger.info(QUEUE_EVENTS.CLAIM_NOOP, {
+        submissionId,
+        gradingAttempt,
+        outcome: 'no_op',
+        reason: 'attempt_mismatch'
+      });
       return;
     }
   }
@@ -165,7 +246,21 @@ const processSubmission = async ({ submissionId, gradingAttempt, attemptIdempote
     attemptIdempotencyKey: current.attemptIdempotencyKey,
     leaseDurationMs: processingLeaseConfig.enabled ? processingLeaseConfig.leaseDurationMs : null
   });
-  if (!submission) return;
+  if (!submission) {
+    queueEventLogger.info(QUEUE_EVENTS.CLAIM_NOOP, {
+      submissionId,
+      gradingAttempt: current.gradingAttempt,
+      outcome: 'no_op',
+      reason: 'conditional_claim_failed'
+    });
+    return;
+  }
+
+  queueEventLogger.info(QUEUE_EVENTS.CLAIM_SUCCEEDED, {
+    submissionId,
+    gradingAttempt: submission.gradingAttempt,
+    outcome: 'running'
+  });
 
   const heartbeatController = createHeartbeatController(submission);
   const expectedAttempt = getExpectedAttempt(submission);
@@ -244,11 +339,26 @@ const server = http.createServer(async (req, res) => {
     try {
       body = await parseBody(req);
     } catch {
+      queueEventLogger.warn(QUEUE_EVENTS.DELIVERY_REJECTED, {
+        transport: 'http',
+        outcome: 'rejected',
+        reason: 'invalid_json'
+      });
       return sendJson(res, 400, { error: 'invalid queue message', code: 'invalid_json' });
     }
 
     const parsed = parseSubmissionQueueMessage(body);
     if (!parsed.success) {
+      queueEventLogger.warn(QUEUE_EVENTS.DELIVERY_REJECTED, {
+        transport: 'http',
+        outcome: 'rejected',
+        reason: parsed.error.code,
+        field: parsed.error.field,
+        submissionId: body?.submissionId,
+        gradingAttempt: body?.gradingAttempt,
+        correlationId: body?.correlationId,
+        schemaVersion: body?.schemaVersion
+      });
       return sendJson(res, 400, {
         error: 'invalid queue message',
         code: parsed.error.code,
@@ -257,6 +367,15 @@ const server = http.createServer(async (req, res) => {
     }
 
     const message = parsed.data;
+    queueEventLogger.info(QUEUE_EVENTS.DELIVERY_ACCEPTED, {
+      transport: 'http',
+      outcome: 'accepted',
+      submissionId: message.submissionId,
+      gradingAttempt: message.gradingAttempt,
+      correlationId: message.correlationId,
+      schemaVersion: message.schemaVersion
+    });
+
     setImmediate(() => {
       processSubmission({
         submissionId: message.submissionId,
@@ -279,16 +398,25 @@ server.listen(port, () => {
   console.log(`worker listening on http://localhost:${port}`);
   void recoverQueuedSubmissions()
     .then((count) => {
-      if (count > 0) console.log(`queued submissions recovered: ${count}`);
+      queueEventLogger.info(QUEUE_EVENTS.QUEUED_RECOVERY_COMPLETED, {
+        trigger: 'startup',
+        outcome: 'completed',
+        count
+      });
     })
     .catch((error) => {
-      console.error('queued submission recovery failed', error);
+      queueEventLogger.error(QUEUE_EVENTS.QUEUED_RECOVERY_FAILED, {
+        trigger: 'startup',
+        outcome: 'failed',
+        reason: 'list_or_schedule_failed',
+        errorType: error?.name ?? 'Error'
+      });
     });
 
   startStaleRecoveryScanner({
     config: staleRecoveryConfig,
     maxInfraRetryAttempts,
     retryEnqueueBaseUrl,
-    logger: console
+    eventLogger: queueEventLogger
   });
 });

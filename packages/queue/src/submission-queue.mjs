@@ -1,5 +1,6 @@
 import { buildSubmissionQueueMessage } from './message-contract.mjs';
 import { createHttpQueueProducer } from './http-queue-producer.mjs';
+import { createQueueEventLogger, QUEUE_EVENTS } from './queue-event-logger.mjs';
 
 const getDefaultWorkerUrl = () => process.env.RUNNER_API_BASE_URL ?? 'http://localhost:8081';
 
@@ -9,7 +10,9 @@ export const enqueueSubmissionAttempt = async ({
   attemptIdempotencyKey,
   correlationId,
   runnerApiBaseUrl = getDefaultWorkerUrl(),
-  queueProducer
+  queueProducer,
+  eventLogger = createQueueEventLogger({ service: 'api' }),
+  source = 'submission'
 }) => {
   let message;
   try {
@@ -19,10 +22,24 @@ export const enqueueSubmissionAttempt = async ({
       attemptIdempotencyKey,
       correlationId
     });
-  } catch {
+  } catch (error) {
+    eventLogger.warn(QUEUE_EVENTS.ENQUEUE_FAILED, {
+      transport: 'http',
+      source,
+      submissionId,
+      gradingAttempt,
+      correlationId,
+      outcome: 'rejected',
+      reason: 'message_build_failed',
+      errorType: error?.name ?? 'TypeError'
+    });
     return false;
   }
 
-  const producer = queueProducer ?? createHttpQueueProducer({ baseUrl: runnerApiBaseUrl });
+  const producer = queueProducer ?? createHttpQueueProducer({
+    baseUrl: runnerApiBaseUrl,
+    eventLogger,
+    source
+  });
   return producer.enqueue(message);
 };

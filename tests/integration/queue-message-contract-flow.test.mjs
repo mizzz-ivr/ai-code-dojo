@@ -18,11 +18,41 @@ const waitForHealth = async (url, retries = 30) => {
   throw new Error(`health check failed: ${url}`);
 };
 
-test('Worker /jobsは共通queue message contractを適用する', async (t) => {
+const createEventCollector = (streams) => {
+  const events = [];
+  let buffer = '';
+  const collect = (chunk) => {
+    buffer += chunk.toString('utf8');
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      try {
+        const payload = JSON.parse(line);
+        if (typeof payload.event === 'string') events.push(payload);
+      } catch {
+        // queue event以外の通常ログは対象外
+      }
+    }
+  };
+  for (const stream of streams) stream?.on('data', collect);
+  return events;
+};
+
+const waitForEvent = async (events, eventName, reason, retries = 30) => {
+  for (let i = 0; i < retries; i += 1) {
+    const matched = events.find((event) => event.event === eventName && (reason === undefined || event.reason === reason));
+    if (matched) return matched;
+    await sleep(50);
+  }
+  throw new Error(`queue event not observed: ${eventName}/${reason ?? '*'}`);
+};
+
+test('Worker /jobsは共通queue message contractと構造化イベント契約を適用する', async (t) => {
   const worker = spawn('node', ['apps/worker/src/server.mjs'], {
     env: { ...process.env, WORKER_PORT: '18085' },
-    stdio: 'ignore'
+    stdio: ['ignore', 'pipe', 'pipe']
   });
+  const events = createEventCollector([worker.stdout, worker.stderr]);
   t.after(() => worker.kill('SIGKILL'));
 
   await waitForHealth(`${workerBaseUrl}/health`);
@@ -77,4 +107,16 @@ test('Worker /jobsは共通queue message contractを適用する', async (t) => 
     submissionId: 'missing-submission',
     gradingAttempt: 1
   });
+
+  await waitForEvent(events, 'queue.delivery.rejected', 'unsupported_schema_version');
+  await waitForEvent(events, 'queue.delivery.rejected', 'unknown_field');
+  await waitForEvent(events, 'queue.delivery.rejected', 'invalid_json');
+  await waitForEvent(events, 'queue.delivery.accepted');
+  await waitForEvent(events, 'queue.claim.noop', 'submission_not_found');
+
+  const serialized = JSON.stringify(events);
+  assert.equal(serialized.includes('must not be transported'), false);
+  assert.equal(serialized.includes('submission-1:attempt:1'), false);
+  assert.equal(serialized.includes('missing-submission:attempt:1'), false);
+  assert.equal(serialized.includes('attemptIdempotencyKey'), false);
 });
