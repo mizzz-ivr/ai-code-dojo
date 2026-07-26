@@ -51,13 +51,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:integration
-      - name: Upload integration failure log
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: integration-test-failure
-          path: .artifacts/integration-test-failure.log
-          if-no-files-found: ignore
 
   schema-validation:
     runs-on: ubuntu-latest
