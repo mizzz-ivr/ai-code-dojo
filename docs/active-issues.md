@@ -1,6 +1,6 @@
 # active-issues（正本）
 
-最終更新: 2026-07-26（Issue #119 SQS producer adapter PoCをレビュー準備中）
+最終更新: 2026-07-26（Issue #119 SQS producer adapter PoCをレビュー中）
 
 ## この文書の目的
 進行中/未解決課題を、優先順位と依存関係付きで管理する。
@@ -14,9 +14,9 @@
 
 ### #119 SQS producer adapterの非本番PoCとtransport contractを追加する
 - 優先度: P2
-- 状態: Open / In Progress
+- 状態: Open / Review
 - GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/119`
-- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/120`（Draft）
+- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/120`（Ready for review）
 - 作業branch: `feat/sqs-producer-adapter-poc`
 - 目的: transactional outbox dispatcher配下へ注入可能なSQS producer adapterを追加し、AWS runtime wiring前にtransport contractを非本番で検証する。
 - 対象:
