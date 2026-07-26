@@ -3,14 +3,17 @@ import { listChallenges, getChallengeBySlug } from './repositories/challenge-rep
 import { createSubmissionAndEnqueue, getSubmissionResult } from './services/submission-service.mjs';
 import { listAdminChallenges, getAdminChallengeById, createAdminChallenge, createAdminChallengeVersion, setChallengePublishStatus, findPublishedChallengeBySlug } from './repositories/admin-challenge-repository.mjs';
 import { login, setSessionCookie, clearSessionCookie, getUserFromRequest } from './auth.mjs';
+import { loadQueueOutboxConfig } from './config/queue-outbox-config.mjs';
+import { startQueueOutboxDispatcher } from './services/queue-outbox-dispatcher.mjs';
 
 const port = Number(process.env.API_PORT ?? 8080);
+const queueOutboxConfig = loadQueueOutboxConfig();
+const queueOutboxDispatcher = startQueueOutboxDispatcher({ config: queueOutboxConfig });
 
 const sendJson = (res, statusCode, payload) => {
   res.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(payload));
 };
-
 
 const validateAdminPayload = (body) => {
   if (!body?.slug || !body?.versionData?.metadata?.title) return 'slug と versionData.metadata.title は必須です。';
@@ -27,7 +30,6 @@ const buildReviewPreview = (slug, reviewConfig) => ({
   reviewerComments: reviewConfig.reviewerCommentTemplates ?? ['要件の網羅性とテスト観点を確認しました。'],
   summary: (reviewConfig.focusPoints ?? []).join(' / ') || '要件を満たすための最小修正'
 });
-
 
 const forbidden = (res) => sendJson(res, 403, { error: 'forbidden' });
 const unauthorized = (res) => sendJson(res, 401, { error: 'unauthorized' });
@@ -91,7 +93,6 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-
     if (req.method === 'GET' && url.pathname === '/api/admin/challenges') {
       if (!requireRole(req, res, 'admin')) return;
       const challenges = await listAdminChallenges();
@@ -150,7 +151,10 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'POST' && url.pathname === '/api/submissions') {
       const body = await parseBody(req);
-      const result = await createSubmissionAndEnqueue(body);
+      const result = await createSubmissionAndEnqueue(body, {
+        outboxConfig: queueOutboxConfig,
+        dispatchOutbox: ({ trigger }) => queueOutboxDispatcher.trigger(trigger)
+      });
       if (result.error) return sendJson(res, result.statusCode, { error: result.error });
       return sendJson(res, result.statusCode, result.data);
     }
@@ -168,6 +172,8 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 500, { error: `internal error: ${error.message}` });
   }
 });
+
+server.on('close', () => queueOutboxDispatcher.stop());
 
 server.listen(port, () => {
   console.log(`api listening on http://localhost:${port}`);

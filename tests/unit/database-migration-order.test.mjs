@@ -10,7 +10,7 @@ const resetDbModule = async () => {
   return import(`${moduleUrl.href}?t=${Date.now()}`);
 };
 
-test('runMigrations adds attempt and processing lease columns before indexes on legacy submissions table', async () => {
+test('runMigrations adds attempt, lease, and queue outbox schema idempotently', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'dojo-db-migrate-'));
   const prev = process.cwd();
   process.chdir(dir);
@@ -52,8 +52,62 @@ test('runMigrations adds attempt and processing lease columns before indexes on 
   assert.ok(indexes.some((index) => index.name === 'idx_submissions_attempt_unique'));
   assert.ok(indexes.some((index) => index.name === 'idx_submissions_attempt_key_unique'));
 
+  const outboxColumns = migratedDb.prepare('PRAGMA table_info(queue_outbox)').all();
+  const outboxIndexes = migratedDb.prepare('PRAGMA index_list(queue_outbox)').all();
+  const outboxColumnNames = new Set(outboxColumns.map((column) => column.name));
+
+  assert.ok(outboxColumnNames.has('submission_id'));
+  assert.ok(outboxColumnNames.has('grading_attempt'));
+  assert.ok(outboxColumnNames.has('message_json'));
+  assert.ok(outboxColumnNames.has('status'));
+  assert.ok(outboxColumnNames.has('publish_attempts'));
+  assert.ok(outboxColumnNames.has('last_attempted_at'));
+  assert.ok(outboxColumnNames.has('last_error_type'));
+  assert.ok(outboxIndexes.some((index) => index.name === 'idx_queue_outbox_pending'));
+
+  const insertOutbox = migratedDb.prepare(`
+    INSERT INTO queue_outbox (
+      id,
+      submission_id,
+      grading_attempt,
+      message_json,
+      status,
+      created_at,
+      updated_at,
+      publish_attempts
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  assert.throws(
+    () => insertOutbox.run(
+      'invalid-status',
+      'submission-invalid-status',
+      1,
+      '{}',
+      'invalid',
+      '2026-07-25T00:00:00.000Z',
+      '2026-07-25T00:00:00.000Z',
+      0
+    ),
+    /CHECK constraint failed/
+  );
+  assert.throws(
+    () => insertOutbox.run(
+      'negative-attempts',
+      'submission-negative-attempts',
+      1,
+      '{}',
+      'pending',
+      '2026-07-25T00:00:00.000Z',
+      '2026-07-25T00:00:00.000Z',
+      -1
+    ),
+    /CHECK constraint failed/
+  );
+
   const keyRows = migratedDb.prepare('SELECT attempt_idempotency_key FROM submissions').all();
+  const outboxRows = migratedDb.prepare('SELECT id FROM queue_outbox').all();
   assert.deepEqual(keyRows, []);
+  assert.deepEqual(outboxRows, []);
 
   migratedDb.close();
   process.chdir(prev);

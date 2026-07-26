@@ -1,6 +1,6 @@
 # active-issues（正本）
 
-最終更新: 2026-07-25（Issue #115 application retry backoffをレビュー中）
+最終更新: 2026-07-25（Issue #117 transactional outbox PoCをレビュー中）
 
 ## この文書の目的
 進行中/未解決課題を、優先順位と依存関係付きで管理する。
@@ -12,40 +12,61 @@
 
 ## 進行中Issue
 
-### #115 application retryへexponential backoffとfull jitterの遅延ポリシーを追加する
-- 優先度: P1
+### #117 submission作成とqueue publishのdual-writeをtransactional outboxで解消する
+- 優先度: P2
 - 状態: Open / Review
-- GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/115`
-- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/116`（Ready for review）
-- 作業branch: `feat/application-retry-backoff`
-- 目的: infrastructure failure後のapplication retry再投入を設定可能なexponential backoff + full jitterで分散し、retry stormを抑制する。
+- GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/117`
+- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/118`（Ready for review）
+- 作業branch: `feat/transactional-outbox-poc`
+- 目的: submission保存とqueue publish intentを同一SQLite transactionで確定し、publish失敗時もpending outboxから再送可能にする。
 - 対象:
-  - `WORKER_APPLICATION_RETRY_BACKOFF_ENABLED`
-  - base delay / max delay設定とvalidation
-  - retry ordinalに基づくexponential cap
-  - full jitter
-  - injectable random / sleep
-  - new attempt作成後・HTTP enqueue前のbest-effort delay
-  - delay scheduled / failed構造化event
-  - unit / integration test
+  - `queue_outbox` table / pending検索index
+  - status / publish attemptのCHECK制約
+  - `(submission_id, grading_attempt)` unique constraint
+  - submission + outbox atomic transaction
+  - `API_QUEUE_OUTBOX_ENABLED`
+  - polling interval / batch size validation
+  - API起動時 / submission直後 / interval dispatcher
+  - 既存HTTP queue producer portへのpublish
+  - publish成功時のpublished更新
+  - publish失敗時のpending維持・attempt count・一般化error type
+  - outbox structured event
+  - unit / integration / migration test
   - current-status / active-issues / system-overview / runbook / logs / ai-prompts / handoff
 - 非対象:
-  - transport retry backoff
-  - durable delayed delivery / DB `next_retry_at`
-  - external queue / transactional outbox
+  - SQS / RabbitMQ / Redis Streams等の実broker導入
   - visibility timeout / ack / nack / DLQ実装
-  - metrics backend / dashboard / 本番alert設定
-  - DB schema / migration / seed変更
-  - Runner / hidden tests / auth / admin / UI / deployment変更
+  - replay / purge UI・API
+  - PostgreSQL等への移行
+  - durable application retry scheduling
+  - Runner / hidden tests / auth / admin / learner UI / deployment変更
 - 完了条件:
-  - feature flag無効時は0msで現行即時enqueueを維持する。
-  - retry回数に応じたexponential capとfull jitterを適用する。
-  - delay wait失敗時は一般化eventを記録し、即時enqueueへフォールバックする。
-  - attempt key、code、hidden tests、secret、raw error messageをeventへ出さない。
-  - retry上限、processing lease、attempt fencing、completion guardを変更しない。
+  - submission rowとoutbox rowが同一transactionでcommit / rollbackされる。
+  - feature flag無効時は既存の保存→同期HTTP enqueueと502挙動を維持する。
+  - feature flag有効時はatomic保存成功後、publish失敗でも201で受理する。
+  - pending dispatcherが既存queue producer portを利用する。
+  - publish成功時だけpublishedへ更新する。
+  - publish失敗時はpendingを維持する。
+  - duplicate publishでgrading attempt / attempt keyを変更しない。
+  - Worker conditional claim / attempt fencing / completion guardを維持する。
+  - learner responseへoutbox情報を追加しない。
+  - code / tests / secret / attempt key / raw error messageをeventへ出さない。
   - 全品質ゲートとdocs validationを通過する。
 
 ## Recently Completed
+
+### #115 / PR #116 （完了済み）
+- 優先度: P1
+- 状態: Closed / Merged / Completed
+- 完了日: 2026-07-25
+- GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/115`
+- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/116`
+- 関連資料:
+  - `docs/runbooks/2026-07-25-application-retry-backoff-runbook.md`
+  - `docs/logs/2026-07-25-issue-115-application-retry-backoff.md`
+  - `docs/ai-prompts/2026-07-25-issue-115-application-retry-backoff-codex.md`
+  - `docs/handoff/2026-07-25-issue-115-application-retry-backoff-handoff.md`
+- 反映内容: application retryへfeature flag付きexponential backoff + full jitterを追加し、共有SQLite integration suiteを独立processで直列実行するrunnerへ安定化した。
 
 ### #113 / PR #114 （完了済み）
 - 優先度: P1
@@ -53,12 +74,7 @@
 - 完了日: 2026-07-25
 - GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/113`
 - GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/114`
-- 関連資料:
-  - `docs/runbooks/2026-07-24-queue-transport-observability-runbook.md`
-  - `docs/logs/2026-07-24-issue-113-queue-transport-observability.md`
-  - `docs/ai-prompts/2026-07-24-issue-113-queue-transport-observability-codex.md`
-  - `docs/handoff/2026-07-24-issue-113-queue-transport-observability-handoff.md`
-- 反映内容: enqueue / delivery / claim / heartbeat / retry / queued recovery / stale recoveryをallowlist fieldのJSON Lines eventとして実装し、metric・alert候補と運用runbookを整備した。
+- 反映内容: enqueue / delivery / claim / heartbeat / retry / queued recovery / stale recoveryをallowlist fieldのJSON Lines eventとして実装した。
 
 ### #111 / PR #112 （完了済み）
 - 優先度: P1
@@ -66,11 +82,7 @@
 - 完了日: 2026-07-24
 - GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/111`
 - GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/112`
-- 関連資料:
-  - `docs/logs/2026-07-24-issue-111-queue-contract-http-adapter.md`
-  - `docs/ai-prompts/2026-07-24-issue-111-queue-contract-http-adapter-codex.md`
-  - `docs/handoff/2026-07-24-issue-111-queue-contract-http-adapter-handoff.md`
-- 反映内容: schema version 1のqueue message contract、producer port、HTTP adapter、producer / consumer共通validation、contract testを実装した。
+- 反映内容: schema version 1のqueue message contract、producer port、HTTP adapter、producer / consumer共通validationを実装した。
 
 ### #109 / PR #110 （完了済み）
 - 優先度: P1
@@ -78,49 +90,25 @@
 - 完了日: 2026-07-23
 - GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/109`
 - GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/110`
-- 成果物:
-  - `docs/reports/2026-07-23-queue-operations-visibility-dlq-backoff-design.md`
-  - `docs/adr/2026-07-23-queue-delivery-and-db-fencing-boundary.md`
-- 反映内容: at-least-once delivery、ack、visibility timeout、transport/application retry、DLQ、transactional outbox、rollout / rollback方針を確定。
+- 反映内容: at-least-once delivery、ack、visibility timeout、transport/application retry、DLQ、transactional outbox、rollout / rollback方針を確定した。
 
-### #105 / PR #108 （完了済み）
-- 優先度: P1
-- 状態: Closed / Merged / Completed
-- 完了日: 2026-07-23
-- GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/105`
-- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/108`
-- Linear mirror: `MIZ-34`（Done）
-- 反映内容: lease期限切れrunningだけをexpected attempt / key / lease expiry付きtransactionでnew attemptへ回収し、startup / periodic scanner、retry上限判定、再投入失敗終端化を実装した。
-
-### #106 / PR #107 （完了済み）
-- 優先度: P1
-- 状態: Closed / Merged / Completed
-- 完了日: 2026-07-23
-- GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/106`
-- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/107`
-- 反映内容: retry再投入失敗時に現在のqueued attemptだけをattempt/keyでfenceし、completion guardを維持したまま `infra_failed` へ終端化する経路を追加した。
-
-### #102 / PR #104 / #101 / PR #103 / #99 / PR #100 （完了済み）
-- processing lease、heartbeat、attempt fencing、stale recovery設計、Worker起動時queued回収を段階的に整備済み。
-- 詳細は各Issueのlogs / ai-prompts / handoffおよびreportsを参照する。
-
-### #96 / PR #95 / #93 / #91 / #89 / #87 / #85 / #83 （完了済み）
-- retry state machine、completion guard、SQLite migration順序、attempt単位idempotency key、重複採点防止設計を段階的に整備済み。
+### #105 / PR #108 / #106 / PR #107 / #102 / PR #104 （完了済み）
+- processing lease、heartbeat、attempt fencing、stale recovery、queued retry enqueue failure終端化を段階的に整備済み。
 - 詳細は各Issueのlogs / ai-prompts / handoffおよびreportsを参照する。
 
 ## Next Issue Candidates
 
-1. external queue / transactional outbox PoC Issue（P2）
-   - 優先理由: 製品選定・dual-write対策・visibility / ack / DLQ contractを非本番で検証するため。
+1. external queue adapter / broker PoC Issue（P2）
+   - 優先理由: Issue #117のoutbox dispatcher配下へHTTP以外のproducer adapterを追加し、非本番でdelivery contractを検証するため。
 2. DLQ ops / replay / purge Issue（P2）
    - 優先理由: ops権限・監査・retentionを含む運用導線を整備するため。
 3. queue metrics backend / dashboard / alert設定Issue（P2）
-   - 優先理由: Issue #113のevent contractを実際の監視基盤へ接続するため。
+   - 優先理由: queue / outbox event contractを実際の監視基盤へ接続するため。
 4. durable application retry scheduling Issue（P2）
    - 優先理由: process内best-effort delayを外部queueまたは永続化時刻へ移行するため。
 
 ## Branch Cleanup
 
-- PR #114のhead branch `feat/queue-transport-observability` は削除確認対象。
-- Issue #115のhead branchは `feat/application-retry-backoff`。
-- PR #116 merge後にIssue #115のhead branchを削除する。
+- PR #116のhead branch `feat/application-retry-backoff` は削除確認対象。
+- Issue #117のhead branchは `feat/transactional-outbox-poc`。
+- PR #118 merge後にIssue #117のhead branchを削除する。
