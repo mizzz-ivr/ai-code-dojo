@@ -7,8 +7,8 @@ transactional outbox dispatcher配下へ注入可能なSQS producer adapterを�
 - Issue: #119
 - PR: #120
 - Branch: `feat/sqs-producer-adapter-poc`
-- PR状態: Draft
-- CI状態: コードheadでapp-quality全成功、docs反映後のfinal head確認待ち
+- PR状態: Ready for review準備完了
+- CI状態: final headでdocs validation / app-quality全成功
 
 ## Implemented
 - `packages/queue/src/sqs-queue-producer.mjs`
@@ -120,8 +120,18 @@ Outbox dispatcherはtransportを注入可能にし、SQS注入時のoutbox event
 - artifactは失敗がなかったため生成されなかった。
 - diagnostic workflow / runner変更を完全に削除した。
 - 診断差分なしのコードheadでlint / typecheck / unit / integration / schema validation / buildが成功した。
+- 正本docs反映後のfinal headでもdocs validationを含む全品質ゲートが成功した。
 
 初回失敗の詳細ログを取得できていないため原因は断定しない。既存process integrationの一時的競合の可能性がある。
+
+## Final CI
+- docs validation: Success
+- lint: Success
+- typecheck: Success
+- unit: Success
+- integration: Success
+- schema validation: Success
+- build: Success
 
 ## Correctness Boundary
 - SQS producerはdelivery availabilityだけを担う。
@@ -153,12 +163,11 @@ Outbox dispatcherはtransportを注入可能にし、SQS注入時のoutbox event
 - production runtimeはHTTPでbroker durabilityなし。
 
 ## Remaining Tasks
-1. final headのdocs validation / app-qualityを確認する。
-2. PR #120本文を完成させる。
-3. PR #120をReady for reviewへ変更する。
-4. Issue #119へ実装・テスト結果をコメントする。
-5. Linear / Notion同期可否を確認する。
-6. merge後にbranch cleanupを確認する。
+1. PR #120本文を完成させる。
+2. PR #120をReady for reviewへ変更する。
+3. Issue #119へ実装・テスト結果をコメントする。
+4. Linear / Notion同期可否を確認する。
+5. merge後にbranch cleanupを確認する。
 
 ## Next Recommended Issue
 1. AWS SDK runtime wiring / transport config / IAM / deployment
