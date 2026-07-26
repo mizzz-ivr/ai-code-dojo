@@ -1,12 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 
 const integrationRoot = path.resolve(process.cwd(), 'tests/integration');
-const diagnosticRoot = path.resolve(process.cwd(), '.artifacts');
-const diagnosticPath = path.join(diagnosticRoot, 'integration-test-failure.log');
 
 const collectTestFiles = async (directory) => {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -46,14 +43,6 @@ for (const absolutePath of testFiles) {
   );
 
   if (result.status !== 0) {
-    const diagnostic = [
-      `FAIL ${relativePath}`,
-      result.stdout ?? '',
-      result.stderr ?? '',
-      result.error?.stack ?? ''
-    ].join('\n');
-    mkdirSync(diagnosticRoot, { recursive: true });
-    writeFileSync(diagnosticPath, diagnostic, 'utf8');
     console.error(`FAIL ${relativePath}`);
     if (result.stdout) process.stderr.write(result.stdout);
     if (result.stderr) process.stderr.write(result.stderr);
