@@ -30,6 +30,8 @@ const eventNames = new Set(Object.values(QUEUE_EVENTS));
 const levels = new Set(['info', 'warn', 'error']);
 const allowedFields = new Set([
   'transport',
+  'provider',
+  'queueType',
   'source',
   'outcome',
   'reason',
