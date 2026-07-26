@@ -1,6 +1,6 @@
 # current-status（正本）
 
-最終更新: 2026-07-25（Issue #117 transactional outbox PoCをレビュー中）
+最終更新: 2026-07-26（Issue #119 SQS producer adapter PoCを実装中）
 
 ## この文書の目的
 「今どこまで実装済みか」を短時間で把握するための現況スナップショット。
@@ -12,18 +12,21 @@
 - attempt単位idempotency key、completion guard、processing lease / heartbeat、stale running自動回収まで実装済み。
 - Issue #111 / PR #112でqueue message contractとqueue producer port、Issue #113 / PR #114で構造化queue eventを実装済み。
 - Issue #115 / PR #116でapplication retryのexponential backoff + full jitter seamを実装済み。
-- Issue #117 / PR #118でsubmission作成とqueue publish intentを同一transactionへまとめるtransactional outbox PoCを実装中。
+- Issue #117 / PR #118でsubmission作成とqueue publish intentを同一transactionへまとめるtransactional outbox PoCを実装済み。
+- Issue #119 / PR #120で注入可能なSQS producer adapterの非本番PoCを実装中。
 - API直接実行禁止、hidden tests非公開、challenge version追加方式の不変条件を維持する。
 
 ## 稼働中の運用基盤
 - 採点系はAPI→Workerの非同期連携を維持し、APIで提出コードを直接実行しない。
 - queue message schema version 1はsubmission ID / grading attempt / attempt idempotency key / optional correlation IDだけを許可する。
-- 現行publish先は共通queue producer port配下のHTTP adapterであり、Worker `POST /jobs`へ通知する。
+- 現行runtimeのpublish先は共通queue producer port配下のHTTP adapterであり、Worker `POST /jobs`へ通知する。
 - outbox無効時は従来どおりsubmission保存後に同期HTTP enqueueし、失敗時は502を返す。
 - outbox有効時はsubmissionと`queue_outbox` rowを同一SQLite transactionで保存し、atomic保存成功後はpublish成否にかかわらず201で受理する。
 - outbox dispatcherはAPI起動時・submission直後・設定intervalでpending rowをpublishする。
 - publish成功時だけoutboxをpublishedへ更新し、失敗時はpendingを維持する。
 - duplicate publishはat-least-once deliveryの正常な障害モードとして許容し、Worker conditional claim / attempt fencing / completion guardで二重採点を防止する。
+- SQS adapter PoCは`enqueue(message) -> boolean`を満たすが、AWS SDK・credentials・runtime transport切替・SQS consumerは未接続。
+- Standard SQSはversion付きmessage bodyを送信し、FIFOではsubmission単位group hashとattempt単位deduplication hashを追加する。
 - Workerは起動時にDB上の`queued` submissionを回収する。
 - heartbeat有効時はprocessing leaseを保存し、heartbeat・状態更新・terminal保存をattempt/key/lease期限でfenceする。
 - stale recovery有効時はlease期限切れrunningだけをnew attempt / new keyへ回収する。
@@ -32,40 +35,41 @@
 - CIはlint / typecheck / unit / integration / schema validation / build / docs validationを品質ゲートとする。
 
 ## 進行中事項
-- Issue #117: `queue_outbox` tableとpending検索indexを追加する。
-- Issue #117: submission + outboxを`BEGIN IMMEDIATE` transactionでatomic作成する。
-- Issue #117: `API_QUEUE_OUTBOX_ENABLED`とpoll interval / batch size設定を追加する。
-- Issue #117: pending outboxを既存queue producer portへpublishするdispatcherを追加する。
-- Issue #117: publish成功時だけpublishedへ更新し、失敗時はpendingと一般化error typeを保持する。
-- Issue #117: outbox publish / dispatchの構造化eventを追加する。
-- Issue #117: unit / integration / migration testとRepository運用docsを整備する。
+- Issue #119: queue producer port準拠の`createSqsQueueProducer`を追加する。
+- Issue #119: Standard / FIFOのSendMessage input contractを実装する。
+- Issue #119: FIFO group / deduplication IDをSHA-256で導出し、raw attempt keyをmetadataへ露出しない。
+- Issue #119: SQS client / command factoryを注入可能にし、AWS SDK依存追加を後続Issueへ分離する。
+- Issue #119: MessageId取得時だけpublish成功と判定する。
+- Issue #119: SQS enqueue / outbox dispatchを機微情報なしの構造化eventへ統合する。
+- Issue #119: unit / component integration testとRepository運用docsを整備する。
 
 ## 直近完了事項
+- Issue #117 / PR #118を完了し、transactional outbox、atomic submission作成、pending dispatcher、feature flag、migration / unit / integration testを実装した。
 - Issue #115 / PR #116を完了し、application retryのexponential backoff + full jitter、feature flag、運用runbook、安定したintegration runnerを実装した。
 - Issue #113 / PR #114を完了し、queue transportの構造化イベントログ、field allowlist、metric / alert候補、運用runbookを実装した。
 - Issue #111 / PR #112を完了し、version付きmessage contract、queue producer port、HTTP adapter、producer / consumer共通validationを実装した。
 - Issue #109 / PR #110を完了し、at-least-once delivery、ack、visibility timeout、transport/application retry、DLQ、transactional outbox方針を確定した。
 
 ## 優先順位（直近）
-1. Issue #117 / PR #118: transactional outbox PoCを実装する。
-2. 後続P2: 実broker adapter / external queue PoCを追加する。
-3. 後続P2: DLQ ops / replay / purgeを整備する。
-4. 後続P2: queue eventをmetrics backend / dashboard / alertへ接続する。
-5. 後続P2: durable application retry schedulingを設計する。
+1. Issue #119 / PR #120: SQS producer adapterの非本番PoCを完了する。
+2. 後続P2: `@aws-sdk/client-sqs`を使うruntime wiring・IAM・deployment設計を追加する。
+3. 後続P2: SQS consumer / visibility timeout / ack / DLQの非本番PoCを追加する。
+4. 後続P2: outbox claim / leaseを追加し、複数API processのduplicate publishを制御する。
+5. 後続P2: queue / outbox eventをmetrics backend / dashboard / alertへ接続する。
 6. 継続: Runner隔離強化とhidden tests漏洩防止を改善する。
 
 ## branch cleanup 状態
-- PR #116は2026-07-25にmerge済み。
-- PR #116のhead branch `feat/application-retry-backoff` は削除確認対象。
-- Issue #117の作業branchは `feat/transactional-outbox-poc`。
-- PR #118 merge後にhead branchを削除する。
+- PR #118は2026-07-26にmerge済み。
+- PR #118のhead branch `feat/transactional-outbox-poc` は削除確認対象。
+- Issue #119の作業branchは `feat/sqs-producer-adapter-poc`。
+- PR #120 merge後にhead branchを削除する。
 
 ## 参照先
 - Repository: `https://github.com/mizzz-ivr/ai-code-dojo`
+- Issue #119: `https://github.com/mizzz-ivr/ai-code-dojo/issues/119`
+- PR #120: `https://github.com/mizzz-ivr/ai-code-dojo/pull/120`
 - Issue #117: `https://github.com/mizzz-ivr/ai-code-dojo/issues/117`
 - PR #118: `https://github.com/mizzz-ivr/ai-code-dojo/pull/118`
-- Issue #115: `https://github.com/mizzz-ivr/ai-code-dojo/issues/115`
-- PR #116: `https://github.com/mizzz-ivr/ai-code-dojo/pull/116`
 - queue運用設計: `docs/reports/2026-07-23-queue-operations-visibility-dlq-backoff-design.md`
 - transactional outbox runbook: `docs/runbooks/2026-07-25-transactional-outbox-runbook.md`
 - application retry backoff: `docs/runbooks/2026-07-25-application-retry-backoff-runbook.md`
