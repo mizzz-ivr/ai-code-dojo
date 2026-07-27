@@ -8,6 +8,12 @@ const toDeliveryCount = (value) => {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 };
 
+const assertIntegerInRange = (value, name, min, max) => {
+  if (!Number.isSafeInteger(value) || value < min || value > max) {
+    throw new RangeError(`${name} must be an integer between ${min} and ${max}.`);
+  }
+};
+
 const parseSqsDelivery = (delivery) => {
   if (!delivery || typeof delivery !== 'object' || Array.isArray(delivery)) {
     return { success: false, reason: 'invalid_envelope' };
@@ -158,6 +164,15 @@ export const createSqsQueueConsumer = ({
   if (!isNonEmptyString(queueUrl)) {
     throw new TypeError('SQS consumer queueUrl is required.');
   }
+  assertIntegerInRange(waitTimeSeconds, 'SQS consumer waitTimeSeconds', 1, 20);
+  assertIntegerInRange(visibilityTimeoutSeconds, 'SQS consumer visibilityTimeoutSeconds', 1, 43_200);
+  assertIntegerInRange(visibilityHeartbeatSeconds, 'SQS consumer visibilityHeartbeatSeconds', 1, 43_200);
+  if (visibilityHeartbeatSeconds * 3 > visibilityTimeoutSeconds) {
+    throw new RangeError('SQS consumer visibilityHeartbeatSeconds must be at most one third of visibilityTimeoutSeconds.');
+  }
+  if (!Number.isSafeInteger(pollErrorDelayMs) || pollErrorDelayMs <= 0) {
+    throw new RangeError('SQS consumer pollErrorDelayMs must be a positive safe integer.');
+  }
   if (typeof processMessage !== 'function') {
     throw new TypeError('SQS consumer processMessage is required.');
   }
@@ -222,8 +237,9 @@ export const createSqsQueueConsumer = ({
       clearIntervalFn
     });
 
+    let processingResult;
     try {
-      await processMessage(message);
+      processingResult = await processMessage(message);
     } catch (error) {
       await visibility.stop();
       eventLogger.error(QUEUE_EVENTS.CONSUMER_PROCESSING_FAILED, {
@@ -244,6 +260,24 @@ export const createSqsQueueConsumer = ({
     }
 
     await visibility.stop();
+
+    if (processingResult?.acknowledge === false) {
+      const reason = processingResult.reason ?? 'durable_state_not_confirmed';
+      eventLogger.warn(QUEUE_EVENTS.ACK_DEFERRED, {
+        transport: 'sqs',
+        provider: 'aws',
+        source: 'consumer',
+        outcome: 'deferred',
+        reason,
+        messageId: parsed.messageId,
+        deliveryCount: parsed.deliveryCount,
+        submissionId: message.submissionId,
+        gradingAttempt: message.gradingAttempt,
+        correlationId: message.correlationId,
+        schemaVersion: message.schemaVersion
+      });
+      return { accepted: true, deleted: false, reason };
+    }
 
     try {
       await client.send(deleteCommandFactory({
