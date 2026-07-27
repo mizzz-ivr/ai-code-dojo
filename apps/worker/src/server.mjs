@@ -132,7 +132,7 @@ const handleInfrastructureFailure = async ({ submissionId, submission, error }) 
         reason: 'max_attempts_reached'
       });
     }
-    return;
+    return Boolean(terminalized);
   }
 
   const retryPending = await updateSubmissionForAttempt(
@@ -147,7 +147,7 @@ const handleInfrastructureFailure = async ({ submissionId, submission, error }) 
       outcome: 'no_op',
       reason: 'conditional_update_failed'
     });
-    return;
+    return false;
   }
 
   queueEventLogger.info(QUEUE_EVENTS.RETRY_PENDING, {
@@ -165,7 +165,7 @@ const handleInfrastructureFailure = async ({ submissionId, submission, error }) 
       outcome: 'no_op',
       reason: 'conditional_start_failed'
     });
-    return;
+    return false;
   }
 
   queueEventLogger.info(QUEUE_EVENTS.RETRY_STARTED, {
@@ -219,7 +219,7 @@ const handleInfrastructureFailure = async ({ submissionId, submission, error }) 
       gradingAttempt: retriedSubmission.gradingAttempt,
       outcome: 'accepted'
     });
-    return;
+    return true;
   }
 
   queueEventLogger.error(QUEUE_EVENTS.RETRY_ENQUEUE_FAILED, {
@@ -250,6 +250,7 @@ const handleInfrastructureFailure = async ({ submissionId, submission, error }) 
       reason: 'enqueue_failed'
     });
   }
+  return Boolean(finalized);
 };
 
 const processSubmission = async ({ submissionId, gradingAttempt, attemptIdempotencyKey }) => {
@@ -261,7 +262,7 @@ const processSubmission = async ({ submissionId, gradingAttempt, attemptIdempote
       outcome: 'no_op',
       reason: 'submission_not_found'
     });
-    return;
+    return { acknowledge: true, reason: 'submission_not_found' };
   }
 
   if (typeof gradingAttempt === 'number' && attemptIdempotencyKey) {
@@ -272,7 +273,7 @@ const processSubmission = async ({ submissionId, gradingAttempt, attemptIdempote
         outcome: 'no_op',
         reason: 'attempt_mismatch'
       });
-      return;
+      return { acknowledge: true, reason: 'attempt_mismatch' };
     }
   }
 
@@ -289,7 +290,7 @@ const processSubmission = async ({ submissionId, gradingAttempt, attemptIdempote
       outcome: 'no_op',
       reason: 'conditional_claim_failed'
     });
-    return;
+    return { acknowledge: true, reason: 'conditional_claim_failed' };
   }
 
   queueEventLogger.info(QUEUE_EVENTS.CLAIM_SUCCEEDED, {
@@ -306,8 +307,10 @@ const processSubmission = async ({ submissionId, gradingAttempt, attemptIdempote
     const challenge = await readJson(path.join(challengeBasePath, 'problem.json'));
 
     if (submission.language !== 'javascript') {
-      if (!heartbeatController.hasOwnership()) return;
-      await updateSubmissionForAttempt(submissionId, {
+      if (!heartbeatController.hasOwnership()) {
+        return { acknowledge: false, reason: 'processing_ownership_lost' };
+      }
+      const updated = await updateSubmissionForAttempt(submissionId, {
         status: 'failed',
         result: {
           status: 'failed',
@@ -318,7 +321,10 @@ const processSubmission = async ({ submissionId, gradingAttempt, attemptIdempote
           artifacts: []
         }
       }, expectedAttempt);
-      return;
+      return {
+        acknowledge: Boolean(updated),
+        reason: updated ? 'terminal_saved' : 'terminal_save_not_confirmed'
+      };
     }
 
     const normalizedResult = useIsolationPoc
@@ -333,15 +339,27 @@ const processSubmission = async ({ submissionId, gradingAttempt, attemptIdempote
           code: submission.code
         });
 
-    if (!heartbeatController.hasOwnership()) return;
-    await updateSubmissionForAttempt(
+    if (!heartbeatController.hasOwnership()) {
+      return { acknowledge: false, reason: 'processing_ownership_lost' };
+    }
+    const updated = await updateSubmissionForAttempt(
       submissionId,
       { status: 'completed', result: normalizedResult },
       expectedAttempt
     );
+    return {
+      acknowledge: Boolean(updated),
+      reason: updated ? 'terminal_saved' : 'terminal_save_not_confirmed'
+    };
   } catch (error) {
-    if (!heartbeatController.hasOwnership()) return;
-    await handleInfrastructureFailure({ submissionId, submission, error });
+    if (!heartbeatController.hasOwnership()) {
+      return { acknowledge: false, reason: 'processing_ownership_lost' };
+    }
+    const handled = await handleInfrastructureFailure({ submissionId, submission, error });
+    return {
+      acknowledge: Boolean(handled),
+      reason: handled ? 'infrastructure_failure_handled' : 'infrastructure_failure_not_confirmed'
+    };
   } finally {
     heartbeatController.stop();
   }
