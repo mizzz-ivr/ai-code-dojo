@@ -9,7 +9,8 @@ WorkerへSQS consumer PoCを追加し、long polling、visibility延長、DB永�
 - Issue: #123
 - PR: #124
 - Branch: `feat/sqs-consumer-poc`
-- PR状態: Draft
+- PR状態: Ready for review
+- CI状態: docs validation / app-quality成功
 - Production: HTTP consumerのまま
 
 ## Implemented
@@ -26,7 +27,9 @@ WorkerへSQS consumer PoCを追加し、long polling、visibility延長、DB永�
 - Consumer structured events
 - Consumer最小IAM policy例
 - Unit / component integration / startup validation
-- Runbook / logs / prompt / handoff
+- DeleteMessage失敗時の非削除test
+- Existing stale recovery integrationのSQLite busy retry
+- Canonical docs / runbook / logs / prompt / handoff
 
 ## Runtime Configuration
 
@@ -52,20 +55,20 @@ WORKER_SQS_POLL_ERROR_DELAY_MS=1000
 
 DeleteMessageする条件:
 
-- terminal結果保存成功
-- infrastructure failureのnew attempt enqueue成功
-- retry enqueue失敗の終端化成功
-- submission不存在
-- attempt mismatch
-- conditional claimの安全なno-op
+- Terminal結果保存成功
+- Infrastructure failureのnew attempt enqueue成功
+- Retry enqueue失敗の終端化成功
+- Submission不存在
+- Attempt mismatch
+- Conditional claimの安全なno-op
 
 DeleteMessageしない条件:
 
-- invalid JSON / contract
-- processing exception
+- Invalid JSON / contract
+- Processing exception
 - DB processing lease所有権喪失
-- terminal保存未確認
-- retry状態遷移未確認
+- Terminal保存未確認
+- Retry状態遷移未確認
 - DeleteMessage失敗
 
 ## Visibility Boundary
@@ -116,14 +119,37 @@ Customer managed KMS key:
 - Processing exception非削除
 - Ack deferred
 - Visibility extension failure
+- DeleteMessage failure
 - Receive failure
 - Runtime client lifecycle
 - Startup validation
 - Safe no-op ack / invalid contract component integration
+- Existing HTTP / queued recovery / stale recovery / application retry regression
 
-## CI Note
+## CI Result
 
-初回integrationでは既存`stale-recovery-flow`に一時的なSQLite lockが発生した。新規SQS consumer component testは成功している。無関係な修正は混在させず、failed jobの再実行で再現性を確認する。
+- Docs validation: Success
+- Frozen lockfile install: Success
+- Lint: Success
+- Typecheck: Success
+- Unit: Success
+- Integration: Success
+- Schema validation: Success
+- Build: Success
+
+初回integrationでは既存`stale-recovery-flow`に一時SQLite lockが発生した。Production repositoryやtransaction処理は変更せず、test polling helperだけで一時busyを再試行するようにした。
+
+## Review Focus
+
+- DB永続状態確認後のack条件が十分か。
+- Safe no-opをackする境界が妥当か。
+- Invalid / unexpected failureをdeleteしていないか。
+- Visibility timeoutとDB processing leaseの責務分離が妥当か。
+- 最新ReceiptHandleをDeleteMessageへ使用しているか。
+- HTTP時にAWS clientを生成していないか。
+- ReceiptHandle / raw SDK errorをeventへ出していないか。
+- Consumer IAMがleast privilegeか。
+- DLQ resource設定がruntimeコードへ混在していないか。
 
 ## Risks
 
@@ -136,13 +162,10 @@ Customer managed KMS key:
 
 ## Remaining Tasks
 
-1. Canonical docsを更新する。
-2. Final headのdocs validation / app-qualityを確認する。
-3. PR #124本文を完成させる。
-4. PR #124をReady for reviewへ変更する。
-5. Issue #123へ実装・テスト結果をコメントする。
-6. Notion / Linear同期を確認する。
-7. Merge後にbranch cleanupを確認する。
+1. Final management docs同期後のdocs validation / app-qualityを確認する。
+2. Issue #123へ実装・テスト結果をコメントする。
+3. Notion / Linear同期を確認する。
+4. Merge後にIssue closeとbranch cleanupを確認する。
 
 ## Next Recommended Issue
 
