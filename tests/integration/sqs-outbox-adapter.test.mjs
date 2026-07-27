@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { dispatchQueueOutboxBatch } from '../../apps/api/src/services/queue-outbox-dispatcher.mjs';
+import { createQueueRuntime } from '../../apps/api/src/services/queue-runtime.mjs';
 import { buildSubmissionQueueMessage } from '../../packages/queue/src/message-contract.mjs';
 import { createQueueEventLogger } from '../../packages/queue/src/queue-event-logger.mjs';
-import { createSqsQueueProducer } from '../../packages/queue/src/sqs-queue-producer.mjs';
 
 const queueUrl = 'https://sqs.ap-northeast-1.amazonaws.com/123456789012/ai-code-dojo';
 
@@ -13,39 +13,54 @@ const createCaptureLogger = () => {
     events,
     logger: createQueueEventLogger({
       service: 'integration-test',
-      now: () => '2026-07-26T00:00:00.000Z',
+      now: () => '2026-07-27T00:00:00.000Z',
       writeLine: (_level, line) => events.push(JSON.parse(line))
     })
   };
 };
 
-test('outbox dispatcherは注入されたSQS producerでpending messageをpublishできる', async () => {
+test('outbox dispatcherはSQS runtime経由でpending messageをpublishできる', async () => {
   const capture = createCaptureLogger();
   const commands = [];
   const published = [];
+  let clientFactoryCalls = 0;
+  let destroyCalls = 0;
   const message = buildSubmissionQueueMessage({
     submissionId: 'submission-sqs-1',
     gradingAttempt: 1,
     attemptIdempotencyKey: 'submission-sqs-1:attempt:1',
     correlationId: 'correlation-sqs-1'
   });
-  const producer = createSqsQueueProducer({
-    client: {
-      send: async (command) => {
-        commands.push(command);
-        return { MessageId: 'sqs-message-1' };
+  const runtime = createQueueRuntime({
+    config: {
+      transport: 'sqs',
+      sqs: {
+        region: 'ap-northeast-1',
+        queueUrl,
+        queueType: 'standard'
       }
     },
-    commandFactory: (input) => ({ input }),
-    queueUrl,
-    source: 'outbox',
-    eventLogger: capture.logger
+    sqsClientFactory: (options) => {
+      clientFactoryCalls += 1;
+      assert.deepEqual(options, { region: 'ap-northeast-1' });
+      return {
+        send: async (command) => {
+          commands.push(command);
+          return { MessageId: 'sqs-message-1' };
+        },
+        destroy: () => {
+          destroyCalls += 1;
+        }
+      };
+    },
+    sqsCommandFactory: (input) => ({ input }),
+    eventLoggerFactory: () => capture.logger
   });
 
   const summary = await dispatchQueueOutboxBatch({
     limit: 10,
     trigger: 'component_test',
-    transport: 'sqs',
+    transport: runtime.transport,
     eventLogger: capture.logger,
     listPending: async () => [{
       id: 'outbox-sqs-1',
@@ -55,17 +70,7 @@ test('outbox dispatcherは注入されたSQS producerでpending messageをpublis
       messageErrorType: null,
       status: 'pending'
     }],
-    enqueue: async ({
-      submissionId,
-      gradingAttempt,
-      attemptIdempotencyKey,
-      correlationId
-    }) => producer.enqueue(buildSubmissionQueueMessage({
-      submissionId,
-      gradingAttempt,
-      attemptIdempotencyKey,
-      correlationId
-    })),
+    enqueue: runtime.enqueue,
     markPublished: async (id) => {
       published.push(id);
       return { id, status: 'published' };
@@ -77,6 +82,7 @@ test('outbox dispatcherは注入されたSQS producerでpending messageをpublis
 
   assert.deepEqual(summary, { scanned: 1, published: 1, failed: 0 });
   assert.deepEqual(published, ['outbox-sqs-1']);
+  assert.equal(clientFactoryCalls, 1);
   assert.deepEqual(commands, [{
     input: {
       QueueUrl: queueUrl,
@@ -100,4 +106,7 @@ test('outbox dispatcherは注入されたSQS producerでpending messageをpublis
   assert.equal(serialized.includes('submission-sqs-1:attempt:1'), false);
   assert.equal(serialized.includes('hiddenTests'), false);
   assert.equal(serialized.includes('code'), false);
+
+  assert.equal(runtime.close(), true);
+  assert.equal(destroyCalls, 1);
 });

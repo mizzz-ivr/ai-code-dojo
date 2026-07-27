@@ -1,6 +1,6 @@
 # system-overview（正本）
 
-最終更新: 2026-07-26（Issue #119 SQS producer adapter PoCを反映）
+最終更新: 2026-07-27（Issue #121 SQS runtime wiringを反映）
 
 ## この文書の目的
 実装詳細に入る前に、システム境界・責務分担・データフローを把握するためのアーキテクチャ概観を提供する。
@@ -10,29 +10,30 @@
 - API: challenge/submission/adminの公開境界、認可制御、submission永続化、採点依頼
 - Transactional outbox: submissionとqueue publish intentのatomic永続化、pending publish再送
 - Queue contract / port: version付きmessage、producer / consumer共通validation、transport差し替え境界
-- Queue transport: 現行HTTP通知、SQS producer PoC、将来のdurable delivery / visibility / ack / retry / DLQ
+- Queue runtime: API起動時のHTTP / SQS選択、producer lifecycle、legacy / outbox共通enqueue
+- Queue transport: HTTP通知、SQS SendMessage、将来のReceiveMessage / visibility / ack / DLQ
 - Queue observability: allowlist fieldのJSON Lines event、将来metrics / alertへ変換する監視契約
-- Worker: 採点ジョブのclaim、実行、heartbeat、application retry backoff、stale scanner、結果保存、障害回復
+- Worker: 採点ジョブのclaim、実行、heartbeat、application retry、stale scanner、結果保存、障害回復
 - Runner: テスト実行と結果正規化
 
 ## 高レベル構成
 1. WebがAPIからchallengeを取得する。
 2. WebがAPIにsubmissionを作成する。
-3. outbox無効時はAPIがsubmissionを保存後、queue producer portへ同期enqueueする。
+3. outbox無効時はAPIがsubmissionを保存後、queue runtimeへ同期enqueueする。
 4. outbox有効時はAPIがsubmissionとqueue publish intentを同一SQLite transactionで保存する。
-5. outbox dispatcherがpending messageをqueue producer portへ渡す。
-6. 現行runtimeではHTTP adapterがWorker `POST /jobs`へmessageを通知する。
-7. 非本番PoCでは同じproducer portへSQS adapterを注入できる。
+5. outbox dispatcherがpending messageを同じqueue runtimeへ渡す。
+6. `API_QUEUE_TRANSPORT=http`ではHTTP adapterがWorker `POST /jobs`へmessageを通知する。
+7. `API_QUEUE_TRANSPORT=sqs`ではSQS adapterがAWS SDK v3の`SendMessageCommand`を送信する。
 8. enqueue / outbox publish結果を構造化queue eventとして記録する。
-9. Workerが共通message contractでrequestを検証し、delivery eventを記録する。
-10. WorkerがDB上のsubmissionを条件付きclaimし、claim eventを記録する。
-11. heartbeat有効時はWorkerがprocessing leaseを定期延長する。
-12. WorkerがRunnerでvisible / hidden testsを実行する。
-13. infrastructure failure時はretry上限を確認し、new attemptを作成する。
-14. application retry backoff有効時はnew attemptのHTTP enqueue前にfull jitter delayを適用する。
-15. stale recovery有効時はWorkerが起動時・定期的に期限切れleaseを走査する。
-16. Workerがexpected attempt / keyによるfenced updateとcompletion guardで結果を保存する。
-17. Webがsubmission結果をポーリング表示する。
+9. HTTP経路ではWorkerが共通message contractでrequestを検証し、DB上のsubmissionを条件付きclaimする。
+10. heartbeat有効時はWorkerがprocessing leaseを定期延長する。
+11. WorkerがRunnerでvisible / hidden testsを実行する。
+12. infrastructure failure時はretry上限を確認し、new attemptを作成する。
+13. stale recovery有効時はWorkerが期限切れleaseを走査する。
+14. Workerがexpected attempt / keyによるfenced updateとcompletion guardで結果を保存する。
+15. Webがsubmission結果をポーリング表示する。
+
+SQS consumerは未実装であるため、SQS transportを選択しただけではWorkerによる採点開始まで到達しない。実queueへのproduction切替はconsumer実装とdeployment検証後に行う。
 
 ## queue message contract（Issue #111 / PR #112）
 
@@ -63,29 +64,94 @@ messageへ次を含めない。
 
 ### queue producer port
 - portは `enqueue(message) -> boolean` の最小interfaceとする。
-- API legacy submission、outbox dispatcher、Worker retry、stale recoveryは同じproducer contractを利用する。
+- API legacy submissionとoutbox dispatcherはAPI起動時に生成した同じruntime enqueueを利用する。
+- Worker retry / stale recoveryは既存producer contractを維持する。
 - transport publishではgrading attempt / attempt idempotency keyを変更しない。
-- API serviceは既存import互換性のため`enqueueSubmissionAttempt`をre-exportする。
+
+## queue runtime（Issue #121 / PR #122）
+
+### transport選択
+- `API_QUEUE_TRANSPORT`は`http`または`sqs`を許可する。
+- 既定値は`http`とし、既存動作とrollback経路を維持する。
+- HTTP選択時はSQS関連設定を参照せず、AWS clientを生成しない。
+- SQS選択時は`API_QUEUE_OUTBOX_ENABLED=1`を必須とする。
+
+### SQS設定
+SQS選択時に次を起動時検証する。
+
+- `API_SQS_REGION`: non-empty AWS region identifier
+- `API_SQS_QUEUE_URL`: absolute HTTPS URL
+- `API_SQS_QUEUE_TYPE`: `standard`または`fifo`
+- QueueUrlにcredentials、query、fragmentを含めない
+- FIFO指定時はqueue nameが`.fifo`で終わる
+- Standard指定時は`.fifo` queueを拒否する
+
+設定不正時はAPIを起動せず、誤ったtransportでsubmissionを受理しない。
+
+### client lifecycle
+- SQS選択時にAPI process単位で一つの`SQSClient`を生成する。
+- clientはlegacy enqueueとoutbox dispatcherで再利用する。
+- API終了時に`destroy()`をbest-effortで呼び出す。
+- destroy失敗はshutdownへ例外を伝播しない。
+
+### credentials
+- application固有のaccess key / secret key設定を追加しない。
+- credentialsはAWS SDK v3のdefault credential provider chainへ委譲する。
+- IAM role、web identity、shared config等の具体的な供給方法はdeployment責務とする。
+- credentials値、credential source、tokenをqueue message / event / learner responseへ出力しない。
+- credentials不足は最初のSQS send時に失敗し、outbox rowをpendingのまま再試行対象として保持する。
+
+### dependency
+- `@aws-sdk/client-sqs`をroot dependencyとして固定する。
+- `pnpm-lock.yaml`はRepository指定のpnpm versionで生成し、CIは`--frozen-lockfile`を維持する。
+
+## queue adapters
 
 ### HTTP adapter
-- 現行adapterはWorker `POST /jobs`へJSONを送る。
+- Worker `POST /jobs`へversion付きJSONを送る。
 - HTTP 2xxを成功として扱う。
 - 非2xx、network error、contract不正を失敗として扱う。
 - Worker 202はprocess内受理であり、durable broker ackを意味しない。
-- adapterはdelivery availabilityの境界であり、採点correctnessを保証しない。
+- HTTPを既定transportとrollback先として維持する。
 
-### SQS producer adapter PoC（Issue #119 / PR #120）
-- `packages/queue/src/sqs-queue-producer.mjs` がSQS producer contractを提供する。
-- adapterは`enqueue(message) -> boolean`を満たす。
-- AWS SDK clientとSendMessage command factoryは外部から注入する。
-- Repositoryへ`@aws-sdk/client-sqs`依存、credentials、IAM、deployment設定を追加しない。
+### SQS producer adapter（Issue #119 / PR #120）
+- `packages/queue/src/sqs-queue-producer.mjs` が`enqueue(message) -> boolean`を提供する。
 - Standard queueでは`QueueUrl`とversion付き`MessageBody`を構築する。
 - FIFO queueではsubmission単位の`MessageGroupId`とattempt単位の`MessageDeduplicationId`をSHA-256で導出する。
-- FIFO metadataへraw submission IDやraw attempt idempotency keyを含めない。
+- FIFO metadataへraw submission IDやraw attempt keyを含めない。
 - `client.send`成功後に非空の`MessageId`を取得した場合だけpublish成功とする。
 - SDK例外、command生成失敗、MessageId欠落、contract不正はfalseへ正規化する。
 - queue URL、credentials、raw error message、attempt keyをeventへ出力しない。
-- 現時点ではAPI runtimeのtransport選択へ接続せず、fake clientによるunit / component integrationで境界だけを検証する。
+
+## transactional outbox（Issue #117 / PR #118）
+
+### atomic creation
+- outbox有効時はSQLite `BEGIN IMMEDIATE` transactionを開始する。
+- submission rowを`queued`で作成する。
+- 同じattemptのqueue messageを`queue_outbox`へ`pending`で作成する。
+- 両方の作成成功後にcommitする。
+- 途中失敗時はrollbackし、submissionだけを残さない。
+
+### dispatcher
+- API起動時、submission作成直後、設定intervalでpending rowを取得する。
+- 選択されたqueue runtimeへmessageを渡す。
+- enqueue成功時だけoutboxをpublishedへ更新する。
+- enqueue失敗時はpendingを維持し、試行回数・最終試行日時・一般化error typeを更新する。
+- 同一process内の重複dispatcher実行はskipする。
+- transport名をeventへ注入し、HTTP / SQSを正しく分類する。
+
+### API semantics
+- outbox無効時のenqueue失敗は502とする。
+- outbox有効時はatomic保存成功をAPI受理条件とし、publish失敗でも201を返す。
+- outbox状態、publish attempt、内部error typeをlearner responseへ返さない。
+- SQS transportはoutbox有効時だけ許可し、publish intent消失を避ける。
+
+### correctness境界
+- outboxはpublish intent durabilityを担う。
+- queue transportはdelivery availabilityを担う。
+- Worker conditional claim、attempt fencing、processing lease、completion guardが採点correctnessを担う。
+- exactly-once publish / deliveryへ正しさを依存しない。
+- published更新失敗時はrowをpendingのまま残し、duplicate publishを許容する。
 
 ## queue transport observability（Issue #113 / PR #114）
 
@@ -108,219 +174,48 @@ messageへ次を含めない。
 - 提出コード本文
 - visible / hidden tests詳細
 - secret / token / password
+- AWS credentials / credential source
 - attempt idempotency key
-- queue URL / credentials
+- QueueUrl
 - raw error message
-- learnerへ不要なendpoint・認証情報
 
-### event categories
-- `queue.enqueue.*`: HTTP / SQS producerの成功、transport failure、contract rejection
-- `queue.outbox.publish_*`: pending outboxのpublish成功・失敗
-- `queue.outbox.dispatch_*`: batch dispatch結果・dispatcher障害
-- `queue.delivery.*`: Worker `/jobs`のaccepted / rejected
-- `queue.claim.*`: DB conditional claimのsuccess / no-op
-- `queue.heartbeat.failed`: heartbeat更新失敗
-- `queue.retry.*`: retry pending、新attempt開始、delay、再投入、終端化
-- `queue.queued_recovery.*`: Worker起動時queued回収
-- `queue.stale_recovery.*`: candidate回収、再投入失敗、scan summary
-
-### metric変換候補
-- `queue_enqueue_total{transport,outcome,source}`
-- `queue_outbox_publish_total{transport,outcome,reason}`
-- `queue_outbox_pending_count`
-- `queue_outbox_oldest_pending_age_seconds`
-- `queue_delivery_total{outcome,reason}`
-- `queue_claim_total{outcome,reason}`
-- `queue_retry_total{event,outcome,reason}`
-- `queue_retry_delay_ms`
-- `queue_recovery_total{event,outcome,reason}`
-- `queue_heartbeat_failure_total`
-
-現時点ではmetrics endpoint、backend、dashboard、alert本番設定を追加しない。
+## IAM・暗号化境界
+- Producer roleの基本権限は対象queue ARNへの`sqs:SendMessage`だけとする。
+- `ReceiveMessage`、`DeleteMessage`、`PurgeQueue`、queue管理権限をproducer roleへ付与しない。
+- customer managed KMS keyでqueueを暗号化する場合だけ、対象keyへの`kms:Decrypt`と`kms:GenerateDataKey`を追加する。
+- IAM role、queue policy、KMS key policy、TLS強制、VPC endpointはdeployment / IaCの責務とする。
+- policy例:
+  - `docs/security/iam/sqs-producer-policy.json`
+  - `docs/security/iam/sqs-producer-customer-managed-kms-policy.json`
 
 ## application retry backoff（Issue #115 / PR #116）
-
-### 責務
 - application retryはinfrastructure failure後にnew grading attempt / new attempt keyを作成する。
-- backoffはnew attempt作成後からHTTP enqueueまでの待機だけを担う。
+- backoffはnew attempt作成後からenqueueまでの待機だけを担う。
 - transport retryやqueue delivery countには適用しない。
-- grading attempt上限は既存 `WORKER_MAX_INFRA_RETRY_ATTEMPTS` を正本とする。
+- process内delayはbest-effortであり、Worker再起動を越えて保持されない。
+- SQS delayed deliveryやdurable retry schedulingは未実装。
 
-### 設定
-- `WORKER_APPLICATION_RETRY_BACKOFF_ENABLED=1` で有効化する。
-- `WORKER_APPLICATION_RETRY_BASE_DELAY_MS` の既定値は5000ms。
-- `WORKER_APPLICATION_RETRY_MAX_DELAY_MS` の既定値は60000ms。
-- base / maxは正の整数とし、maxはbase以上とする。
-- feature flag無効時はdelay 0msで現行の即時enqueueを維持する。
+## Worker consumer・回復
 
-### delay policy
-- `retryOrdinal = nextAttempt - 2`
-- `capDelayMs = min(maxDelayMs, baseDelayMs * 2^retryOrdinal)`
-- `delayMs = floor(capDelayMs * random())`
-- delay wait失敗時は一般化eventを記録し、即時enqueueへフォールバックする。
-
-### correctness境界
-- new attempt / new keyはdelay前にDBへ確定する。
-- delay中のsubmission statusは`queued`とする。
-- 別Workerやstartup queued recoveryが先にclaimした場合、後続deliveryはattempt fencing / conditional claimでno-opになる。
-- process内delayはbest-effortであり、durable delayed deliveryではない。
-
-## transactional outbox PoC（Issue #117 / PR #118）
-
-### 目的
-- submission保存成功とqueue publish intent登録成功を一つのtransaction境界にする。
-- DB保存後のAPI停止・HTTP enqueue失敗でpublish intentが失われるdual-write問題を解消する。
-- external queue adapter導入前にproducer portと永続化責務を分離する。
-
-### schema
-`queue_outbox`は次を保持する。
-
-- `id`
-- `submission_id`
-- `grading_attempt`
-- `message_json`
-- `status`（`pending` / `published`）
-- `created_at` / `updated_at`
-- `published_at`
-- `publish_attempts`
-- `last_attempted_at`
-- `last_error_type`
-
-制約:
-- `(submission_id, grading_attempt)`を一意にする。
-- pending検索用に`(status, created_at)` indexを使用する。
-- `message_json`はqueue message contractだけを保持し、提出コードやtestsを含めない。
-
-### atomic creation
-- outbox有効時はSQLite `BEGIN IMMEDIATE` transactionを開始する。
-- submission rowを`queued`で作成する。
-- 同じattemptのqueue messageをoutboxへ`pending`で作成する。
-- 両方の作成成功後にcommitする。
-- outbox insertを含む途中失敗時はrollbackし、submissionだけを残さない。
-
-### 設定
-- `API_QUEUE_OUTBOX_ENABLED=1`でoutbox経路を有効化する。
-- `API_QUEUE_OUTBOX_POLL_INTERVAL_MS`の既定値は1000ms。
-- `API_QUEUE_OUTBOX_BATCH_SIZE`の既定値は25。
-- interval / batch sizeは正のsafe integerとする。
-- feature flag無効時はlegacyの保存→同期HTTP enqueueと502挙動を維持する。
-
-### dispatcher
-- API起動時、submission作成直後、設定intervalでpending rowを取得する。
-- batch内の各messageをproducer portへ渡す。
-- enqueue成功時だけoutboxをpublishedへ更新する。
-- enqueue失敗時はpendingを維持し、publish attempt、最終試行日時、一般化error typeを更新する。
-- message parseやDB更新失敗をraw errorとして出力しない。
-- 同一process内の重複dispatcher実行はskipする。
-- transport名を注入可能にし、HTTP / SQS eventを正しく分類する。
-
-### API semantics
-- outbox無効時のenqueue失敗は従来どおり502とする。
-- outbox有効時はatomic保存成功をAPI受理条件とし、publish失敗でも201を返す。
-- outbox状態、publish attempt、内部error typeをlearner responseへ返さない。
-
-### delivery / correctness境界
-- outboxはpublish intentのdurabilityを担う。
-- outboxのpublishedは選択されたproducerが成功を返したことを示す。
-- 複数dispatcherや状態更新失敗によりduplicate publishが発生し得る。
-- exactly-once publishへ正しさを依存しない。
-- Worker conditional claim、attempt fencing、processing lease、completion guardが採点correctnessを担う。
-- published更新失敗時はrowをpendingのまま残し、次回publishを許容する。
-
-### PoC制約
-- SQS producer adapterは注入型PoCとして存在するが、API runtimeへ未接続。
-- outbox claim / leaseは未実装で、複数API process間のduplicate publishを許容する。
-- SQS consumer、DLQ / replay / purge / retentionは未実装。
-- pending件数・oldest ageのmetrics backendは未実装。
-- SQLite fileを複数ホストから共有する運用は前提にしない。
-
-## 現行queue transport
-
-### API producer
-- outbox無効時はsubmission保存後にHTTP adapterへ同期通知する。
-- outbox有効時はdispatcherがpending messageをHTTP adapterへ通知する。
-- HTTP通知失敗時もsubmissionは`queued`、outboxは`pending`で残る。
-- Worker起動時queued recoveryはoutboxとは独立したavailability safety netとして維持する。
-- SQS adapterはruntime未接続のため、production behaviorを変更しない。
-
-### Worker consumer
-- `POST /jobs`は共通message contractによるvalidation後に202を返し、process内で採点処理を開始する。
+### 現行HTTP consumer
+- `POST /jobs`は共通message contractによるvalidation後に202を返す。
 - duplicate notificationはDB conditional claimで一件だけ処理する。
 - invalid JSON / invalid contractは400で拒否する。
-- SQS ReceiveMessage / DeleteMessage consumerは未実装。
 
-### 現行制約
-- productionのdurable broker message storageなし
-- broker ack / nackなし
-- queue visibility timeoutなし
-- delivery countなし
-- transport delayed delivery / transport backoffなし
-- application retry delayはprocess内best-effortのみ
-- DLQ / replay / purge / retentionなし
-- metrics backend / dashboard / 本番alert設定なし
-
-## queue運用方針（Issue #109 / PR #110）
-
-### delivery semantics
-- 将来queueはat-least-once deliveryを前提とする。
-- exactly-once deliveryへ正しさを依存しない。
-- duplicate deliveryは正常な障害モードとして扱う。
-- WorkerはDB conditional claimに成功した場合のみ採点する。
-
-### ack
-- message受信直後にackしない。
-- terminal結果、new attempt作成と再enqueue、retry enqueue failure終端化、安全なduplicate no-opのいずれかをDBで確認・保存した後にackする。
-- ack前のconsumer停止はredeliveryで復旧する。
-
-### visibility timeoutとDB lease
-- queue visibility timeoutはdelivery availabilityを担う。
-- DB processing leaseはcurrent attemptの実行所有権とcorrectnessを担う。
-- attempt idempotency keyはattempt単位のfencingを担う。
-- completion guardはsubmission終端保存の一意化を担う。
-- external queue導入後もDB processing lease / attempt fencing / completion guardを維持する。
-
-### retry
-- transport retryは同一message / 同一attemptの再配送であり、grading attemptを増やさない。
-- application retryは`retry_pending -> queued`でnew grading attempt / new keyを発行する。
-- transport retryとapplication retryのbackoff設定を分離する。
-- queue delivery countをgrading attemptとして扱わない。
-
-### DLQ
-- DLQはqueue messageの配送異常を隔離するinternal queueである。
-- DLQとsubmission statusの`infra_failed`を分離する。
-- runtime failure、通常test failure、terminal済みduplicate、old attempt messageをDLQへ入れない。
-- replay前にDB status / completion guard / attempt / keyを再検証する。
-- learnerはqueue / outbox / DLQ情報へアクセスできない。
-
-### external queue migration
-- queue contract / portは現行HTTP behaviorを維持して導入済み。
-- queue transport observabilityはJSON Lines event contractとして導入済み。
-- application retry backoffはprocess内best-effort seamとして導入済み。
-- transactional outboxは現行HTTP producerをpublish先として導入済み。
-- SQS producer adapter PoCはclient / command factory injectionでtransport contractを検証済み。
-- 次段階でAWS SDK runtime wiring、IAM、実queue、consumerを別Issueとして追加する。
-- rollout中はHTTP adapter、DB lease、queued recovery、stale scannerをrollback・safety netとして維持する。
-
-## 採点ジョブ回復
-
-### queued回収
-- Worker起動時にDB上の`queued` submissionを回収する。
-- `queued -> running`はsubmission ID / grading attempt / attempt idempotency key / completion guard条件付きclaimで一件だけ成功させる。
+### SQS consumer
+- `ReceiveMessage` / long polling / visibility timeout / `DeleteMessage`は未実装。
+- SQS producer runtimeを有効化しても、consumerがない環境ではmessageがqueueへ滞留する。
+- consumer実装は別Issueとし、producer runtime wiringへ混在させない。
 
 ### processing lease / heartbeat
-- heartbeat feature flag有効時のclaimでprocessing leaseを開始する。
-- Workerは実行中にheartbeatを更新し、lease期限を延長する。
-- heartbeat・非終端更新・terminal保存はexpected attempt / attempt idempotency key / lease期限でfenceする。
+- Workerは実行中にprocessing leaseを定期延長する。
+- heartbeat・非終端更新・terminal保存はexpected attempt / attempt key / lease期限でfenceする。
 - lease期限切れ後の更新はno-opとする。
-- completion guardはsubmission単位の終端一意化として維持する。
 
 ### stale running自動回収
-- 候補は`running` / completion guard未設定 / lease非NULL / lease期限切れに限定する。
-- leaseがNULLの`legacy_running`は自動回収しない。
-- recoveryはSQLite `BEGIN IMMEDIATE` transaction内で行う。
-- retry上限未満では`running -> retry_pending -> queued(new attempt/key)`を一貫処理する。
+- `running` / completion guard未設定 / lease非NULL / lease期限切れだけを候補とする。
+- recoveryはSQLite transaction内でnew attempt / new keyを発行する。
 - retry上限到達時はcompletion guardを設定して`infra_failed`へ終端化する。
-- stale recovery enqueueは現時点でapplication retry backoffとoutboxの対象外とし、既存挙動を維持する。
 
 ## データ管理
 - challenge本体: `challenges` + `challenge_versions`
@@ -345,29 +240,24 @@ messageへ次を含めない。
 - learner-safeとinternalレスポンスを分離する。
 - hidden tests詳細はlearnerへ非公開とする。
 - `/api/admin/*`はadminロール必須とする。
-- attempt key、lease、heartbeat、worker識別情報、queue / outbox / DLQ情報はlearnerへ返さない。
-- queue message / SQS metadata / event / logsへ提出コード本文・hidden tests実データ・secret・raw error messageを記録しない。
-- SQS queue URL、credentials、raw attempt keyをobservability eventへ記録しない。
-- queue / outbox / DLQはprivate transportとservice-to-service認証を前提とする。
+- attempt key、lease、heartbeat、queue / outbox / DLQ情報はlearnerへ返さない。
+- queue message / SQS metadata / event / logsへ提出コード本文・tests・secret・credentials・raw errorを記録しない。
+- private transportとservice-to-service認証を前提とする。
 
 ## 重要な不変条件
 - API本体で提出コードを直接実行しない。
 - challenge編集はversion追加方式とし、既存versionを上書きしない。
 - submissionの終端結果はcompletion guardで一意化する。
 - 旧attempt・期限切れleaseからの更新はattempt fencingで拒否する。
-- stale回収は同じattemptを再利用せず、必ずnew attemptとして扱う。
-- queue product、SQS FIFO deduplication、outboxだけに正しさを依存しない。
-- observability失敗で採点・outbox処理を失敗させない。
-- delay失敗でsubmissionを中間状態へ残さず、即時enqueueへフォールバックする。
+- queue製品、SQS FIFO deduplication、outboxだけに採点correctnessを依存しない。
 - outbox insert失敗時はsubmissionもrollbackする。
 - outbox publish失敗時はpendingを維持する。
 - external queue導入後もDB lease / attempt fencing / completion guardを維持する。
+- HTTP transportを安全なrollback先として維持する。
 
 ## 依存関係と制約
 - 現行Runnerは簡易実行であり、将来は隔離強化が前提。
-- 現行production queue transportはHTTP連携である。
-- SQS producer adapterは非本番PoCであり、AWS SDK・runtime config・consumer・deploymentは未接続。
-- process内backoffはWorker再起動を越えて保持されない。
+- SQS producer runtimeは実装するが、実AWS resource・consumer・production deploymentは別責務。
 - SQLite DB fileを複数ホストから共有する運用は前提にしない。
 - Repositoryのcanonical full nameは `mizzz-ivr/ai-code-dojo`。
 - ドキュメント正本は `docs/project-overview.md` のCanonical Source Rulesに従う。
@@ -378,8 +268,7 @@ messageへ次を含めない。
 - 現在状態: `docs/current-status.md`
 - 進行中Issue: `docs/active-issues.md`
 - queue運用設計: `docs/reports/2026-07-23-queue-operations-visibility-dlq-backoff-design.md`
-- queue observability: `docs/runbooks/2026-07-24-queue-transport-observability-runbook.md`
-- application retry backoff: `docs/runbooks/2026-07-25-application-retry-backoff-runbook.md`
+- SQS producer adapter: `docs/runbooks/2026-07-26-sqs-producer-adapter-poc-runbook.md`
+- SQS runtime wiring: `docs/runbooks/2026-07-27-sqs-runtime-wiring-runbook.md`
 - transactional outbox: `docs/runbooks/2026-07-25-transactional-outbox-runbook.md`
-- SQS producer adapter PoC: `docs/runbooks/2026-07-26-sqs-producer-adapter-poc-runbook.md`
 - Worker障害復旧: `docs/runbooks/2026-05-18-worker-failure-recovery-runbook.md`
