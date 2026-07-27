@@ -27,11 +27,18 @@ const stopServer = async (process) => {
   await once(process, 'exit');
 };
 
+const isDatabaseLocked = (error) => error?.code === 'ERR_SQLITE_ERROR'
+  && String(error?.message).includes('database is locked');
+
 const waitForCompletedAttempt = async (repo, submissionId, attempt, retries = 100) => {
   let current;
   for (let i = 0; i < retries; i += 1) {
-    current = await repo.getSubmission(submissionId);
-    if (current.status === 'completed' && current.gradingAttempt === attempt) return current;
+    try {
+      current = await repo.getSubmission(submissionId);
+      if (current.status === 'completed' && current.gradingAttempt === attempt) return current;
+    } catch (error) {
+      if (!isDatabaseLocked(error)) throw error;
+    }
     await sleep(100);
   }
   return current;
