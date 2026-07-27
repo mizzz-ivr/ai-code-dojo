@@ -1,6 +1,6 @@
 # current-status（正本）
 
-最終更新: 2026-07-28（Issue #123 SQS consumer PoCを実装中）
+最終更新: 2026-07-28（Issue #123 SQS consumer PoCをレビュー中）
 
 ## この文書の目的
 
@@ -15,7 +15,7 @@
 - Queue message contract、producer port、構造化event、application retry backoff、transactional outboxまで実装済み。
 - Issue #119 / PR #120でSQS producer adapter PoCを実装・merge済み。
 - Issue #121 / PR #122でAWS SDK v3とAPI queue transport runtime wiringを実装・merge済み。
-- Issue #123 / PR #124でWorker SQS consumer PoCを実装中。
+- Issue #123 / PR #124でWorker SQS consumer PoCを実装し、Ready for review。
 - API直接実行禁止、hidden tests非公開、challenge version追加方式の不変条件を維持する。
 
 ## 実装済みのproducer基盤
@@ -61,9 +61,10 @@
 - Config / consumer / runtime unit testを追加済み。
 - Long polling→message validation→safe no-op→DeleteMessageのcomponent integrationを追加済み。
 - Invalid contractを非削除とし、機微情報をeventへ出さないことを確認済み。
+- DeleteMessage失敗時の非削除と一般化eventを確認済み。
 - 不正SQS設定でWorkerがlisten前に終了するstartup testを追加済み。
-- 初回CIでは新規consumer testは成功したが、既存stale recovery integrationで一時SQLite lockが発生した。
-- 無関係な修正を混在させず、final headで全品質ゲートを再確認する。
+- 既存stale recovery integrationの一時SQLite busyはtest polling helperで再試行する。
+- Docs validation / frozen install / lint / typecheck / unit / integration / schema validation / buildは成功済み。
 
 ## 現時点の非対応・運用制約
 
@@ -77,7 +78,7 @@
 
 ## 優先順位（直近）
 
-1. Issue #123 / PR #124を全品質ゲート成功・Ready for reviewへ進める。
+1. Issue #123 / PR #124をレビュー・mergeする。
 2. SQS source queue / DLQ / RedrivePolicy / IAM role / deployment IaCを別Issueで整備する。
 3. Worker application retry producerを選択queue runtimeへ統合する。
 4. DLQ replay / purge運用を整備する。
