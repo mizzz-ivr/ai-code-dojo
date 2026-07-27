@@ -1,6 +1,6 @@
 # active-issues（正本）
 
-最終更新: 2026-07-28（Issue #123 SQS consumer PoCを実装中）
+最終更新: 2026-07-28（Issue #123 SQS consumer PoCをレビュー中）
 
 ## この文書の目的
 
@@ -17,9 +17,9 @@
 ### #123 SQS consumerのlong polling・visibility延長・安全なack・DLQ契約を追加する
 
 - 優先度: P2
-- 状態: Open / Implementation
+- 状態: Open / Review
 - GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/123`
-- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/124`（Draft）
+- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/124`（Ready for review）
 - 作業branch: `feat/sqs-consumer-poc`
 - 目的: Issue #121のSQS producer runtimeと対になるWorker consumerを追加し、DB永続状態確認後のackとDLQ redrive前提の非削除契約を非本番で検証する。
 
@@ -66,10 +66,11 @@
 
 #### 現在の確認結果
 
-- Lint / typecheck / unit / schema validation: Success
-- 新規SQS consumer component integration: Success
-- 初回integration全体: 既存stale recovery testで一時SQLite lock
-- 対応: 無関係な修正を混在させず、final headで再確認
+- Docs validation: Success
+- Frozen lockfile install: Success
+- Lint / typecheck / unit / integration / schema validation / build: Success
+- 新規SQS consumer unit / component / startup validation: Success
+- 既存stale recovery integrationの一時SQLite busyはtest polling helperで再試行する。
 
 ## Recently Completed
 
