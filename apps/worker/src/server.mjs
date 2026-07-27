@@ -16,9 +16,11 @@ import {
 import { enqueueSubmissionAttempt } from '../../api/src/services/submission-service.mjs';
 import { getApplicationRetryBackoffConfig } from './config/application-retry-backoff-config.mjs';
 import { getProcessingLeaseConfig } from './config/processing-lease-config.mjs';
+import { loadWorkerQueueConsumerConfig } from './config/queue-consumer-config.mjs';
 import { getStaleRecoveryConfig } from './config/stale-recovery-config.mjs';
 import { createApplicationRetryBackoff } from './services/application-retry-backoff.mjs';
 import { runJavaScriptChallenge, runJavaScriptChallengeViaIsolatedJob } from './services/js-runner.mjs';
+import { createWorkerQueueConsumerRuntime } from './services/queue-consumer-runtime.mjs';
 import { startStaleRecoveryScanner } from './services/stale-recovery-scanner.mjs';
 
 const port = Number(process.env.WORKER_PORT ?? 8081);
@@ -32,6 +34,7 @@ const processingLeaseConfig = getProcessingLeaseConfig(process.env);
 const staleRecoveryConfig = getStaleRecoveryConfig(process.env, {
   heartbeatEnabled: processingLeaseConfig.enabled
 });
+const queueConsumerConfig = loadWorkerQueueConsumerConfig(process.env);
 const queueEventLogger = createQueueEventLogger({ service: 'worker' });
 
 if (useIsolationPoc && isProduction) {
@@ -344,6 +347,12 @@ const processSubmission = async ({ submissionId, gradingAttempt, attemptIdempote
   }
 };
 
+const queueConsumerRuntime = createWorkerQueueConsumerRuntime({
+  config: queueConsumerConfig,
+  processMessage: processSubmission,
+  eventLogger: queueEventLogger
+});
+
 const recoverQueuedSubmissions = async () => {
   const queuedSubmissions = await listQueuedSubmissions();
 
@@ -427,8 +436,14 @@ const server = http.createServer(async (req, res) => {
   return sendJson(res, 404, { error: 'not found' });
 });
 
+server.on('close', () => {
+  void queueConsumerRuntime.close();
+});
+
 server.listen(port, () => {
   console.log(`worker listening on http://localhost:${port}`);
+  queueConsumerRuntime.start();
+
   void recoverQueuedSubmissions()
     .then((count) => {
       queueEventLogger.info(QUEUE_EVENTS.QUEUED_RECOVERY_COMPLETED, {
