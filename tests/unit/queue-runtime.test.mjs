@@ -84,6 +84,42 @@ test('SQS runtimeはclientを一度だけ生成して複数enqueueで再利用�
   assert.equal(destroyCalls, 1);
 });
 
+test('SQS runtimeはmessage構築失敗eventをSQS transportとして記録する', async () => {
+  const warnings = [];
+  let sendCalled = false;
+  const logger = {
+    info: () => true,
+    warn: (event, details) => {
+      warnings.push({ event, details });
+      return true;
+    },
+    error: () => true
+  };
+  const runtime = createQueueRuntime({
+    config: sqsConfig,
+    sqsClientFactory: () => ({
+      send: async () => {
+        sendCalled = true;
+        return { MessageId: 'unexpected' };
+      }
+    }),
+    sqsCommandFactory: (input) => ({ input }),
+    eventLoggerFactory: () => logger
+  });
+
+  const result = await runtime.enqueue({
+    submissionId: '',
+    gradingAttempt: 1,
+    attemptIdempotencyKey: 'attempt-1'
+  });
+
+  assert.equal(result, false);
+  assert.equal(sendCalled, false);
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].details.transport, 'sqs');
+  assert.equal(warnings[0].details.reason, 'message_build_failed');
+});
+
 test('SQS runtimeは不正なclient factoryを起動時に拒否する', () => {
   assert.throws(
     () => createQueueRuntime({
