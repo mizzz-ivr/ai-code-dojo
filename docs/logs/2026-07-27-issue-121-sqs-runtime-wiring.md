@@ -7,7 +7,7 @@ Issue #119 / PR #120で実装した注入型SQS producer adapterへAWS SDK v3を
 - Issue: #121
 - PR: #122
 - Branch: `feat/sqs-runtime-wiring`
-- PR状態: Draft
+- PR状態: Ready for review
 
 ## Completed Tasks
 - PR #120のmergeとIssue #119の完了を確認した。
@@ -20,12 +20,14 @@ Issue #119 / PR #120で実装した注入型SQS producer adapterへAWS SDK v3を
 - API process単位で一つのSQS clientを生成・再利用するqueue runtimeを追加した。
 - legacy submissionとoutbox dispatcherへ同じruntime enqueueを注入した。
 - API close時のbest-effort client destroyを追加した。
-- config / runtime unit testを追加した。
+- Message構築失敗eventへ選択transportを反映した。
+- Config / runtime unit testを追加した。
 - SQS outbox component integration testをruntime経由へ更新した。
 - 不正SQS設定でAPIが起動しないprocess integration testを追加した。
 - Producer最小IAM policy例を追加した。
 - current-status / active-issues / system-overviewを更新した。
-- SQS runtime wiring runbookを追加した。
+- SQS runtime wiring runbook、AI prompt、handoffを追加した。
+- PR本文を完成させ、Ready for reviewへ変更した。
 
 ## Technical Decisions
 - HTTPを既定値とrollback先として維持する。
@@ -47,9 +49,18 @@ Issue #119 / PR #120で実装した注入型SQS producer adapterへAWS SDK v3を
 - Exactly-once deliveryへ採点correctnessを依存しない。
 - Processing lease / attempt fencing / completion guardを維持する。
 
-## Test Results
-コード・依存反映headで以下が成功した。
+## Review Finding
+共通message構築失敗時に既存`enqueueSubmissionAttempt`が`transport=http`を固定記録していたため、SQS runtimeでも失敗eventがHTTP扱いになる問題を確認した。
 
+対応:
+- `enqueueSubmissionAttempt`へ既定`http`のtransport引数を追加
+- Queue runtimeから選択transportを注入
+- SQS message構築失敗時のevent分類testを追加
+
+## Test Results
+最終コード・docs反映headで以下が成功した。
+
+- docs validation: Success
 - frozen lockfile install: Success
 - lint: Success
 - typecheck: Success
@@ -58,7 +69,7 @@ Issue #119 / PR #120で実装した注入型SQS producer adapterへAWS SDK v3を
 - schema validation: Success
 - build: Success
 
-Docs反映後のfinal headを再確認する。
+Ready状態同期後のheadでも同じ品質ゲートを再確認する。
 
 ## Risks
 - Credentialsはlazy resolveされ得るため、API起動成功はSQS publish権限成功を保証しない。
@@ -68,12 +79,10 @@ Docs反映後のfinal headを再確認する。
 - Outbox claim / lease未実装のため、複数API processでduplicate publishが発生し得る。
 
 ## Remaining Tasks
-- AI prompt / handoffを追加する。
-- final headのdocs validation / app-qualityを確認する。
-- PR #122本文を完成させる。
-- PR #122をReady for reviewへ変更する。
+- Ready状態同期後のfinal headでdocs validation / app-qualityを確認する。
 - Issue #121へ実装・テスト結果をコメントする。
 - Notion / Linear同期を確認する。
+- Merge後にbranch cleanupを確認する。
 
 ## Suggested Next Actions
 1. PR #122をレビュー・mergeする。
