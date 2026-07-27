@@ -12,7 +12,8 @@ export const enqueueSubmissionAttempt = async ({
   runnerApiBaseUrl = getDefaultWorkerUrl(),
   queueProducer,
   eventLogger = createQueueEventLogger({ service: 'api' }),
-  source = 'submission'
+  source = 'submission',
+  transport = 'http'
 }) => {
   let message;
   try {
@@ -24,7 +25,7 @@ export const enqueueSubmissionAttempt = async ({
     });
   } catch (error) {
     eventLogger.warn(QUEUE_EVENTS.ENQUEUE_FAILED, {
-      transport: 'http',
+      transport,
       source,
       submissionId,
       gradingAttempt,
