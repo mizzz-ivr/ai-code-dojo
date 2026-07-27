@@ -192,6 +192,39 @@ test('SQS consumerはDB永続状態未確認時にackを保留する', async () 
   assert.equal(deferred.reason, 'processing_ownership_lost');
 });
 
+test('SQS consumerはDeleteMessage失敗時にmessageを残しraw errorを記録しない', async () => {
+  const capture = createCaptureLogger();
+  const commands = [];
+  const consumer = createConsumer({
+    eventLogger: capture.logger,
+    processMessage: async () => ({ acknowledge: true, reason: 'terminal_saved' }),
+    send: async (command) => {
+      commands.push(command);
+      if (command.type === 'delete') {
+        const error = new Error('receipt token and endpoint must-not-be-logged');
+        error.name = 'DeleteMessageNetworkError';
+        throw error;
+      }
+      return {};
+    }
+  });
+
+  const result = await consumer.processDelivery(validDelivery);
+
+  assert.deepEqual(result, {
+    accepted: true,
+    deleted: false,
+    reason: 'delete_message_failed'
+  });
+  const deleteCommand = commands.find((command) => command.type === 'delete');
+  assert.equal(deleteCommand.input.ReceiptHandle, validDelivery.ReceiptHandle);
+  const failed = capture.events.find((event) => event.event === 'queue.ack.failed');
+  assert.equal(failed.errorType, 'DeleteMessageNetworkError');
+  const serialized = JSON.stringify(capture.events);
+  assert.equal(serialized.includes('must-not-be-logged'), false);
+  assert.equal(serialized.includes(validDelivery.ReceiptHandle), false);
+});
+
 test('SQS consumerは処理中にvisibilityを延長し延長失敗だけではackを止めない', async () => {
   const capture = createCaptureLogger();
   const commands = [];
