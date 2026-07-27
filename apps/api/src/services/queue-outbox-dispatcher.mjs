@@ -11,10 +11,11 @@ const defaultEventLogger = () => createQueueEventLogger({ service: 'api' });
 const logPublishFailure = ({
   eventLogger,
   row,
+  transport,
   reason,
   errorType
 }) => eventLogger.warn(QUEUE_EVENTS.OUTBOX_PUBLISH_FAILED, {
-  transport: 'http',
+  transport,
   source: 'outbox',
   submissionId: row.submissionId,
   gradingAttempt: row.gradingAttempt,
@@ -26,6 +27,7 @@ const logPublishFailure = ({
 export const dispatchQueueOutboxBatch = async ({
   limit = 25,
   trigger = 'manual',
+  transport = 'http',
   enqueue = enqueueSubmissionAttempt,
   listPending = listPendingQueueOutbox,
   markPublished = markQueueOutboxPublished,
@@ -38,6 +40,7 @@ export const dispatchQueueOutboxBatch = async ({
   } catch (error) {
     const errorType = error?.name ?? 'QueueOutboxReadError';
     eventLogger.error(QUEUE_EVENTS.OUTBOX_DISPATCH_FAILED, {
+      transport,
       source: 'outbox',
       trigger,
       outcome: 'failed',
@@ -55,11 +58,12 @@ export const dispatchQueueOutboxBatch = async ({
       const errorType = row.messageErrorType ?? 'QueueOutboxMessageError';
       try {
         await recordFailure(row.id, errorType);
-        logPublishFailure({ eventLogger, row, reason: 'invalid_message', errorType });
+        logPublishFailure({ eventLogger, row, transport, reason: 'invalid_message', errorType });
       } catch (error) {
         logPublishFailure({
           eventLogger,
           row,
+          transport,
           reason: 'failure_state_update_failed',
           errorType: error?.name ?? 'QueueOutboxUpdateError'
         });
@@ -86,11 +90,12 @@ export const dispatchQueueOutboxBatch = async ({
     if (!enqueued) {
       try {
         await recordFailure(row.id, errorType);
-        logPublishFailure({ eventLogger, row, reason: 'enqueue_failed', errorType });
+        logPublishFailure({ eventLogger, row, transport, reason: 'enqueue_failed', errorType });
       } catch (error) {
         logPublishFailure({
           eventLogger,
           row,
+          transport,
           reason: 'failure_state_update_failed',
           errorType: error?.name ?? 'QueueOutboxUpdateError'
         });
@@ -103,7 +108,7 @@ export const dispatchQueueOutboxBatch = async ({
       const published = await markPublished(row.id);
       summary.published += 1;
       eventLogger.info(QUEUE_EVENTS.OUTBOX_PUBLISH_SUCCEEDED, {
-        transport: 'http',
+        transport,
         source: 'outbox',
         submissionId: row.submissionId,
         gradingAttempt: row.gradingAttempt,
@@ -115,6 +120,7 @@ export const dispatchQueueOutboxBatch = async ({
       logPublishFailure({
         eventLogger,
         row,
+        transport,
         reason: 'publish_state_update_failed',
         errorType: error?.name ?? 'QueueOutboxUpdateError'
       });
@@ -122,6 +128,7 @@ export const dispatchQueueOutboxBatch = async ({
   }
 
   eventLogger.info(QUEUE_EVENTS.OUTBOX_DISPATCH_COMPLETED, {
+    transport,
     source: 'outbox',
     trigger,
     outcome: summary.failed === 0 ? 'completed' : 'partial_failure',
@@ -135,6 +142,7 @@ export const dispatchQueueOutboxBatch = async ({
 
 export const startQueueOutboxDispatcher = ({
   config,
+  transport = 'http',
   dispatch = dispatchQueueOutboxBatch,
   eventLogger = defaultEventLogger(),
   setIntervalFn = setInterval,
@@ -160,11 +168,13 @@ export const startQueueOutboxDispatcher = ({
       return await dispatch({
         limit: config.batchSize,
         trigger: source,
+        transport,
         eventLogger
       });
     } catch (error) {
       const errorType = error?.name ?? 'QueueOutboxDispatchError';
       eventLogger.error(QUEUE_EVENTS.OUTBOX_DISPATCH_FAILED, {
+        transport,
         source: 'outbox',
         trigger: source,
         outcome: 'failed',

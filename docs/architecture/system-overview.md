@@ -1,6 +1,6 @@
 # system-overview（正本）
 
-最終更新: 2026-07-25（Issue #117 transactional outbox PoCを反映）
+最終更新: 2026-07-26（Issue #119 SQS producer adapter PoCを反映）
 
 ## この文書の目的
 実装詳細に入る前に、システム境界・責務分担・データフローを把握するためのアーキテクチャ概観を提供する。
@@ -10,7 +10,7 @@
 - API: challenge/submission/adminの公開境界、認可制御、submission永続化、採点依頼
 - Transactional outbox: submissionとqueue publish intentのatomic永続化、pending publish再送
 - Queue contract / port: version付きmessage、producer / consumer共通validation、transport差し替え境界
-- Queue transport: 現行HTTP通知、将来のdurable delivery / visibility / ack / retry / DLQ
+- Queue transport: 現行HTTP通知、SQS producer PoC、将来のdurable delivery / visibility / ack / retry / DLQ
 - Queue observability: allowlist fieldのJSON Lines event、将来metrics / alertへ変換する監視契約
 - Worker: 採点ジョブのclaim、実行、heartbeat、application retry backoff、stale scanner、結果保存、障害回復
 - Runner: テスト実行と結果正規化
@@ -21,17 +21,18 @@
 3. outbox無効時はAPIがsubmissionを保存後、queue producer portへ同期enqueueする。
 4. outbox有効時はAPIがsubmissionとqueue publish intentを同一SQLite transactionで保存する。
 5. outbox dispatcherがpending messageをqueue producer portへ渡す。
-6. 現行HTTP adapterがWorker `POST /jobs`へmessageを通知する。
-7. enqueue / outbox publish結果を構造化queue eventとして記録する。
-8. Workerが共通message contractでrequestを検証し、delivery eventを記録する。
-9. WorkerがDB上のsubmissionを条件付きclaimし、claim eventを記録する。
-10. heartbeat有効時はWorkerがprocessing leaseを定期延長する。
-11. WorkerがRunnerでvisible / hidden testsを実行する。
-12. infrastructure failure時はretry上限を確認し、new attemptを作成する。
-13. application retry backoff有効時はnew attemptのHTTP enqueue前にfull jitter delayを適用する。
-14. stale recovery有効時はWorkerが起動時・定期的に期限切れleaseを走査する。
-15. Workerがexpected attempt / keyによるfenced updateとcompletion guardで結果を保存する。
-16. Webがsubmission結果をポーリング表示する。
+6. 現行runtimeではHTTP adapterがWorker `POST /jobs`へmessageを通知する。
+7. 非本番PoCでは同じproducer portへSQS adapterを注入できる。
+8. enqueue / outbox publish結果を構造化queue eventとして記録する。
+9. Workerが共通message contractでrequestを検証し、delivery eventを記録する。
+10. WorkerがDB上のsubmissionを条件付きclaimし、claim eventを記録する。
+11. heartbeat有効時はWorkerがprocessing leaseを定期延長する。
+12. WorkerがRunnerでvisible / hidden testsを実行する。
+13. infrastructure failure時はretry上限を確認し、new attemptを作成する。
+14. application retry backoff有効時はnew attemptのHTTP enqueue前にfull jitter delayを適用する。
+15. stale recovery有効時はWorkerが起動時・定期的に期限切れleaseを走査する。
+16. Workerがexpected attempt / keyによるfenced updateとcompletion guardで結果を保存する。
+17. Webがsubmission結果をポーリング表示する。
 
 ## queue message contract（Issue #111 / PR #112）
 
@@ -62,7 +63,7 @@ messageへ次を含めない。
 
 ### queue producer port
 - portは `enqueue(message) -> boolean` の最小interfaceとする。
-- API legacy submission、outbox dispatcher、Worker retry、stale recoveryは同じ`enqueueSubmissionAttempt`経路を利用する。
+- API legacy submission、outbox dispatcher、Worker retry、stale recoveryは同じproducer contractを利用する。
 - transport publishではgrading attempt / attempt idempotency keyを変更しない。
 - API serviceは既存import互換性のため`enqueueSubmissionAttempt`をre-exportする。
 
@@ -72,6 +73,19 @@ messageへ次を含めない。
 - 非2xx、network error、contract不正を失敗として扱う。
 - Worker 202はprocess内受理であり、durable broker ackを意味しない。
 - adapterはdelivery availabilityの境界であり、採点correctnessを保証しない。
+
+### SQS producer adapter PoC（Issue #119 / PR #120）
+- `packages/queue/src/sqs-queue-producer.mjs` がSQS producer contractを提供する。
+- adapterは`enqueue(message) -> boolean`を満たす。
+- AWS SDK clientとSendMessage command factoryは外部から注入する。
+- Repositoryへ`@aws-sdk/client-sqs`依存、credentials、IAM、deployment設定を追加しない。
+- Standard queueでは`QueueUrl`とversion付き`MessageBody`を構築する。
+- FIFO queueではsubmission単位の`MessageGroupId`とattempt単位の`MessageDeduplicationId`をSHA-256で導出する。
+- FIFO metadataへraw submission IDやraw attempt idempotency keyを含めない。
+- `client.send`成功後に非空の`MessageId`を取得した場合だけpublish成功とする。
+- SDK例外、command生成失敗、MessageId欠落、contract不正はfalseへ正規化する。
+- queue URL、credentials、raw error message、attempt keyをeventへ出力しない。
+- 現時点ではAPI runtimeのtransport選択へ接続せず、fake clientによるunit / component integrationで境界だけを検証する。
 
 ## queue transport observability（Issue #113 / PR #114）
 
@@ -83,7 +97,7 @@ messageへ次を含めない。
 - string fieldは最大256文字へ制限する。
 
 許可するcontext例:
-- transport / source / outcome / reason
+- transport / provider / queue type / source / outcome / reason
 - submission ID / grading attempt / previous attempt / next attempt
 - retry ordinal / delay / cap / backoff enabled
 - optional correlation ID / schema version / HTTP status code
@@ -95,11 +109,12 @@ messageへ次を含めない。
 - visible / hidden tests詳細
 - secret / token / password
 - attempt idempotency key
+- queue URL / credentials
 - raw error message
 - learnerへ不要なendpoint・認証情報
 
 ### event categories
-- `queue.enqueue.*`: producerの成功、非2xx、network failure、contract rejection
+- `queue.enqueue.*`: HTTP / SQS producerの成功、transport failure、contract rejection
 - `queue.outbox.publish_*`: pending outboxのpublish成功・失敗
 - `queue.outbox.dispatch_*`: batch dispatch結果・dispatcher障害
 - `queue.delivery.*`: Worker `/jobs`のaccepted / rejected
@@ -110,8 +125,8 @@ messageへ次を含めない。
 - `queue.stale_recovery.*`: candidate回収、再投入失敗、scan summary
 
 ### metric変換候補
-- `queue_enqueue_total{outcome,source}`
-- `queue_outbox_publish_total{outcome,reason}`
+- `queue_enqueue_total{transport,outcome,source}`
+- `queue_outbox_publish_total{transport,outcome,reason}`
 - `queue_outbox_pending_count`
 - `queue_outbox_oldest_pending_age_seconds`
 - `queue_delivery_total{outcome,reason}`
@@ -155,7 +170,7 @@ messageへ次を含めない。
 ### 目的
 - submission保存成功とqueue publish intent登録成功を一つのtransaction境界にする。
 - DB保存後のAPI停止・HTTP enqueue失敗でpublish intentが失われるdual-write問題を解消する。
-- 将来のexternal queue adapter導入前にproducer portと永続化責務を分離する。
+- external queue adapter導入前にproducer portと永続化責務を分離する。
 
 ### schema
 `queue_outbox`は次を保持する。
@@ -192,11 +207,12 @@ messageへ次を含めない。
 
 ### dispatcher
 - API起動時、submission作成直後、設定intervalでpending rowを取得する。
-- batch内の各messageを既存`enqueueSubmissionAttempt`へ渡す。
+- batch内の各messageをproducer portへ渡す。
 - enqueue成功時だけoutboxをpublishedへ更新する。
 - enqueue失敗時はpendingを維持し、publish attempt、最終試行日時、一般化error typeを更新する。
 - message parseやDB更新失敗をraw errorとして出力しない。
 - 同一process内の重複dispatcher実行はskipする。
+- transport名を注入可能にし、HTTP / SQS eventを正しく分類する。
 
 ### API semantics
 - outbox無効時のenqueue失敗は従来どおり502とする。
@@ -205,16 +221,16 @@ messageへ次を含めない。
 
 ### delivery / correctness境界
 - outboxはpublish intentのdurabilityを担う。
-- outboxのpublishedは現行HTTP producerが2xxを受けたことを示し、durable broker保存を意味しない。
+- outboxのpublishedは選択されたproducerが成功を返したことを示す。
 - 複数dispatcherや状態更新失敗によりduplicate publishが発生し得る。
 - exactly-once publishへ正しさを依存しない。
 - Worker conditional claim、attempt fencing、processing lease、completion guardが採点correctnessを担う。
 - published更新失敗時はrowをpendingのまま残し、次回publishを許容する。
 
 ### PoC制約
-- 実broker adapterは未導入。
+- SQS producer adapterは注入型PoCとして存在するが、API runtimeへ未接続。
 - outbox claim / leaseは未実装で、複数API process間のduplicate publishを許容する。
-- DLQ / replay / purge / retentionは未実装。
+- SQS consumer、DLQ / replay / purge / retentionは未実装。
 - pending件数・oldest ageのmetrics backendは未実装。
 - SQLite fileを複数ホストから共有する運用は前提にしない。
 
@@ -225,14 +241,16 @@ messageへ次を含めない。
 - outbox有効時はdispatcherがpending messageをHTTP adapterへ通知する。
 - HTTP通知失敗時もsubmissionは`queued`、outboxは`pending`で残る。
 - Worker起動時queued recoveryはoutboxとは独立したavailability safety netとして維持する。
+- SQS adapterはruntime未接続のため、production behaviorを変更しない。
 
 ### Worker consumer
 - `POST /jobs`は共通message contractによるvalidation後に202を返し、process内で採点処理を開始する。
 - duplicate notificationはDB conditional claimで一件だけ処理する。
 - invalid JSON / invalid contractは400で拒否する。
+- SQS ReceiveMessage / DeleteMessage consumerは未実装。
 
 ### 現行制約
-- durable broker message storageなし
+- productionのdurable broker message storageなし
 - broker ack / nackなし
 - queue visibility timeoutなし
 - delivery countなし
@@ -278,8 +296,9 @@ messageへ次を含めない。
 - queue contract / portは現行HTTP behaviorを維持して導入済み。
 - queue transport observabilityはJSON Lines event contractとして導入済み。
 - application retry backoffはprocess内best-effort seamとして導入済み。
-- transactional outbox PoCは現行HTTP producerをpublish先として導入する。
-- 次段階でoutbox dispatcher配下へ実broker producer adapterを追加する。
+- transactional outboxは現行HTTP producerをpublish先として導入済み。
+- SQS producer adapter PoCはclient / command factory injectionでtransport contractを検証済み。
+- 次段階でAWS SDK runtime wiring、IAM、実queue、consumerを別Issueとして追加する。
 - rollout中はHTTP adapter、DB lease、queued recovery、stale scannerをrollback・safety netとして維持する。
 
 ## 採点ジョブ回復
@@ -327,7 +346,8 @@ messageへ次を含めない。
 - hidden tests詳細はlearnerへ非公開とする。
 - `/api/admin/*`はadminロール必須とする。
 - attempt key、lease、heartbeat、worker識別情報、queue / outbox / DLQ情報はlearnerへ返さない。
-- queue message / event / logsへ提出コード本文・hidden tests実データ・secret・raw error messageを記録しない。
+- queue message / SQS metadata / event / logsへ提出コード本文・hidden tests実データ・secret・raw error messageを記録しない。
+- SQS queue URL、credentials、raw attempt keyをobservability eventへ記録しない。
 - queue / outbox / DLQはprivate transportとservice-to-service認証を前提とする。
 
 ## 重要な不変条件
@@ -336,7 +356,7 @@ messageへ次を含めない。
 - submissionの終端結果はcompletion guardで一意化する。
 - 旧attempt・期限切れleaseからの更新はattempt fencingで拒否する。
 - stale回収は同じattemptを再利用せず、必ずnew attemptとして扱う。
-- queue productやoutboxのdeduplication機能だけに正しさを依存しない。
+- queue product、SQS FIFO deduplication、outboxだけに正しさを依存しない。
 - observability失敗で採点・outbox処理を失敗させない。
 - delay失敗でsubmissionを中間状態へ残さず、即時enqueueへフォールバックする。
 - outbox insert失敗時はsubmissionもrollbackする。
@@ -345,9 +365,9 @@ messageへ次を含めない。
 
 ## 依存関係と制約
 - 現行Runnerは簡易実行であり、将来は隔離強化が前提。
-- 現行queue transportは簡易HTTP連携であり、将来置換を想定する。
+- 現行production queue transportはHTTP連携である。
+- SQS producer adapterは非本番PoCであり、AWS SDK・runtime config・consumer・deploymentは未接続。
 - process内backoffはWorker再起動を越えて保持されない。
-- transactional outbox PoCのpublish先は現行HTTP adapterであり、broker durabilityは提供しない。
 - SQLite DB fileを複数ホストから共有する運用は前提にしない。
 - Repositoryのcanonical full nameは `mizzz-ivr/ai-code-dojo`。
 - ドキュメント正本は `docs/project-overview.md` のCanonical Source Rulesに従う。
@@ -361,4 +381,5 @@ messageへ次を含めない。
 - queue observability: `docs/runbooks/2026-07-24-queue-transport-observability-runbook.md`
 - application retry backoff: `docs/runbooks/2026-07-25-application-retry-backoff-runbook.md`
 - transactional outbox: `docs/runbooks/2026-07-25-transactional-outbox-runbook.md`
+- SQS producer adapter PoC: `docs/runbooks/2026-07-26-sqs-producer-adapter-poc-runbook.md`
 - Worker障害復旧: `docs/runbooks/2026-05-18-worker-failure-recovery-runbook.md`

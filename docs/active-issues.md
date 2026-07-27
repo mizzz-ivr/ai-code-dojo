@@ -1,6 +1,6 @@
 # active-issues（正本）
 
-最終更新: 2026-07-25（Issue #117 transactional outbox PoCをレビュー中）
+最終更新: 2026-07-26（Issue #119 SQS producer adapter PoCをレビュー中）
 
 ## この文書の目的
 進行中/未解決課題を、優先順位と依存関係付きで管理する。
@@ -12,48 +12,60 @@
 
 ## 進行中Issue
 
-### #117 submission作成とqueue publishのdual-writeをtransactional outboxで解消する
+### #119 SQS producer adapterの非本番PoCとtransport contractを追加する
 - 優先度: P2
 - 状態: Open / Review
-- GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/117`
-- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/118`（Ready for review）
-- 作業branch: `feat/transactional-outbox-poc`
-- 目的: submission保存とqueue publish intentを同一SQLite transactionで確定し、publish失敗時もpending outboxから再送可能にする。
+- GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/119`
+- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/120`（Ready for review）
+- 作業branch: `feat/sqs-producer-adapter-poc`
+- 目的: transactional outbox dispatcher配下へ注入可能なSQS producer adapterを追加し、AWS runtime wiring前にtransport contractを非本番で検証する。
 - 対象:
-  - `queue_outbox` table / pending検索index
-  - status / publish attemptのCHECK制約
-  - `(submission_id, grading_attempt)` unique constraint
-  - submission + outbox atomic transaction
-  - `API_QUEUE_OUTBOX_ENABLED`
-  - polling interval / batch size validation
-  - API起動時 / submission直後 / interval dispatcher
-  - 既存HTTP queue producer portへのpublish
-  - publish成功時のpublished更新
-  - publish失敗時のpending維持・attempt count・一般化error type
-  - outbox structured event
-  - unit / integration / migration test
+  - `createSqsQueueProducer`
+  - Standard / FIFO SendMessage input builder
+  - queue message schema version 1の共通validation
+  - client / command factory injection
+  - Standard queueのQueueUrl / MessageBody contract
+  - FIFOのSHA-256 MessageGroupId / MessageDeduplicationId
+  - MessageId取得時だけのpublish成功判定
+  - SQS transport structured event
+  - outbox dispatcherのtransport注入
+  - unit / component integration test
   - current-status / active-issues / system-overview / runbook / logs / ai-prompts / handoff
 - 非対象:
-  - SQS / RabbitMQ / Redis Streams等の実broker導入
-  - visibility timeout / ack / nack / DLQ実装
-  - replay / purge UI・API
-  - PostgreSQL等への移行
-  - durable application retry scheduling
-  - Runner / hidden tests / auth / admin / learner UI / deployment変更
+  - `@aws-sdk/client-sqs`依存追加
+  - AWS credentials / IAM role / KMS / VPC endpoint設定
+  - 本番SQS queue作成
+  - API runtime transport切替
+  - SQS consumer / ReceiveMessage / DeleteMessage
+  - visibility timeout / ack / nack / DLQ
+  - LocalStack等の外部process integration
+  - deployment変更
+  - outbox claim / lease
+  - Runner / hidden tests / auth / admin / learner UI変更
 - 完了条件:
-  - submission rowとoutbox rowが同一transactionでcommit / rollbackされる。
-  - feature flag無効時は既存の保存→同期HTTP enqueueと502挙動を維持する。
-  - feature flag有効時はatomic保存成功後、publish失敗でも201で受理する。
-  - pending dispatcherが既存queue producer portを利用する。
-  - publish成功時だけpublishedへ更新する。
-  - publish失敗時はpendingを維持する。
-  - duplicate publishでgrading attempt / attempt keyを変更しない。
-  - Worker conditional claim / attempt fencing / completion guardを維持する。
-  - learner responseへoutbox情報を追加しない。
-  - code / tests / secret / attempt key / raw error messageをeventへ出さない。
+  - adapterが`enqueue(message) -> boolean`を満たす。
+  - Standard / FIFO queue typeとQueueUrlを検証する。
+  - FIFO metadataへraw submission ID / attempt keyを露出しない。
+  - SDK例外・MessageId欠落・contract不正をfalseへ正規化する。
+  - queue URL、credentials、attempt key、code、tests、raw error messageをeventへ出さない。
+  - outbox dispatcherへSQS producerを注入してpublished更新までcomponent testする。
+  - 現行HTTP runtime、processing lease、attempt fencing、completion guardを変更しない。
   - 全品質ゲートとdocs validationを通過する。
 
 ## Recently Completed
+
+### #117 / PR #118 （完了済み）
+- 優先度: P2
+- 状態: Closed / Merged / Completed
+- 完了日: 2026-07-26
+- GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/117`
+- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/118`
+- 関連資料:
+  - `docs/runbooks/2026-07-25-transactional-outbox-runbook.md`
+  - `docs/logs/2026-07-25-issue-117-transactional-outbox-poc.md`
+  - `docs/ai-prompts/2026-07-25-issue-117-transactional-outbox-poc-codex.md`
+  - `docs/handoff/2026-07-25-issue-117-transactional-outbox-poc-handoff.md`
+- 反映内容: submissionとqueue publish intentのatomic保存、pending outbox dispatcher、feature flag、at-least-once publish、migration / unit / integration testを実装した。
 
 ### #115 / PR #116 （完了済み）
 - 優先度: P1
@@ -61,11 +73,6 @@
 - 完了日: 2026-07-25
 - GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/115`
 - GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/116`
-- 関連資料:
-  - `docs/runbooks/2026-07-25-application-retry-backoff-runbook.md`
-  - `docs/logs/2026-07-25-issue-115-application-retry-backoff.md`
-  - `docs/ai-prompts/2026-07-25-issue-115-application-retry-backoff-codex.md`
-  - `docs/handoff/2026-07-25-issue-115-application-retry-backoff-handoff.md`
 - 反映内容: application retryへfeature flag付きexponential backoff + full jitterを追加し、共有SQLite integration suiteを独立processで直列実行するrunnerへ安定化した。
 
 ### #113 / PR #114 （完了済み）
@@ -98,17 +105,19 @@
 
 ## Next Issue Candidates
 
-1. external queue adapter / broker PoC Issue（P2）
-   - 優先理由: Issue #117のoutbox dispatcher配下へHTTP以外のproducer adapterを追加し、非本番でdelivery contractを検証するため。
-2. DLQ ops / replay / purge Issue（P2）
-   - 優先理由: ops権限・監査・retentionを含む運用導線を整備するため。
-3. queue metrics backend / dashboard / alert設定Issue（P2）
-   - 優先理由: queue / outbox event contractを実際の監視基盤へ接続するため。
-4. durable application retry scheduling Issue（P2）
-   - 優先理由: process内best-effort delayを外部queueまたは永続化時刻へ移行するため。
+1. AWS SDK runtime wiring / IAM / deployment Issue（P2）
+   - 優先理由: Issue #119の注入型adapterへ`@aws-sdk/client-sqs`と実際の設定読込を接続し、限定環境でpublishできる状態にするため。
+2. SQS consumer / visibility timeout / ack / DLQ PoC Issue（P2）
+   - 優先理由: producerだけでなくReceiveMessage / DeleteMessage、redelivery、DLQ contractを非本番で検証するため。
+3. outbox claim / lease Issue（P2）
+   - 優先理由: 複数API processで同じpending rowを同時publishする競合を制御するため。
+4. queue / outbox metrics backend Issue（P2）
+   - 優先理由: pending count / oldest age / publish failureをdashboardとalertへ接続するため。
+5. durable application retry scheduling Issue（P2）
+   - 優先理由: process内best-effort delayをexternal queueまたは永続化時刻へ移行するため。
 
 ## Branch Cleanup
 
-- PR #116のhead branch `feat/application-retry-backoff` は削除確認対象。
-- Issue #117のhead branchは `feat/transactional-outbox-poc`。
-- PR #118 merge後にIssue #117のhead branchを削除する。
+- PR #118のhead branch `feat/transactional-outbox-poc` は削除確認対象。
+- Issue #119のhead branchは `feat/sqs-producer-adapter-poc`。
+- PR #120 merge後にIssue #119のhead branchを削除する。
