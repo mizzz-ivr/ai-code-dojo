@@ -9,7 +9,7 @@ Issue #121 / PR #122で実装したSQS producer runtimeの後続として、Work
 - Issue: #123
 - PR: #124
 - Branch: `feat/sqs-consumer-poc`
-- PR状態: Draft
+- PR状態: Ready for review
 
 ## Completed Tasks
 
@@ -26,16 +26,19 @@ Issue #121 / PR #122で実装したSQS producer runtimeの後続として、Work
 - Consumer eventへMessageId / delivery countを追加し、ReceiptHandleはallowlistへ追加しなかった。
 - Consumer最小IAM policy例を追加した。
 - Config / consumer / runtime unit test、component integration、startup validationを追加した。
+- DeleteMessage失敗時の非削除testを追加した。
 - SQS consumer / DLQ運用runbookを追加した。
+- Canonical docs / AI prompt / handoffを更新した。
+- PR本文を完成させ、Ready for reviewへ変更した。
 
 ## Technical Decisions
 
 - Worker process単位でSQS clientを一度だけ生成・再利用する。
 - `MaxNumberOfMessages=1`として既存の単一submission処理境界を維持する。
-- visibility timeoutはdelivery availability、DB processing leaseはcorrectnessを担う。
-- visibility延長失敗だけではDB terminal保存を抑止しない。
+- Visibility timeoutはdelivery availability、DB processing leaseはcorrectnessを担う。
+- Visibility延長失敗だけではDB terminal保存を抑止しない。
 - DB lease所有権喪失時は結果保存とackを抑止する。
-- safe no-opはackし、invalid / unexpected failureは非削除とする。
+- Safe no-opはackし、invalid / unexpected failureは非削除とする。
 - DLQ移送はsource queueのRedrivePolicyへ委ね、consumerコードへmaxReceiveCountをベタ書きしない。
 - Application retry producerのSQS切替は本Issueへ混在させない。
 
@@ -53,13 +56,20 @@ Issue #121 / PR #122で実装したSQS producer runtimeの後続として、Work
 
 初回CIでは新規SQS consumer unit / component testは成功したが、既存`stale-recovery-flow`で一時的なSQLite `database is locked`が発生した。
 
-- 新規component integration: Success
-- Unit / lint / typecheck / schema validation: Success
-- 失敗原因: 既存stale recovery integrationの一時SQLite lock
-- 対応: 無関係な実装修正を混ぜず、failed jobを再実行して再現性を確認
-- 調査用workflowはartifact取得後に削除済み
+Production repositoryやtransaction処理は変更せず、integration testのpolling helperだけで一時的なSQLite busyを待って再試行するようにした。
 
-Final headの全品質ゲートを再確認する。
+Final code / docs headの確認結果:
+
+- Docs validation: Success
+- Frozen lockfile install: Success
+- Lint: Success
+- Typecheck: Success
+- Unit: Success
+- Integration: Success
+- Schema validation: Success
+- Build: Success
+
+調査用workflowはartifact取得後に削除済み。
 
 ## Risks
 
@@ -73,13 +83,10 @@ Final headの全品質ゲートを再確認する。
 
 ## Remaining Tasks
 
-- Canonical docsを更新する。
-- AI prompt / handoffを追加する。
-- Final headのdocs validation / app-qualityを確認する。
-- PR #124本文を完成させる。
-- PR #124をReady for reviewへ変更する。
+- Final management docs同期後のdocs validation / app-qualityを確認する。
 - Issue #123へ実装・テスト結果をコメントする。
 - Notion / Linear同期を確認する。
+- Merge後にIssue closeとbranch cleanupを確認する。
 
 ## Suggested Next Actions
 
