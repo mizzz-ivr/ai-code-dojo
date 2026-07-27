@@ -17,5 +17,8 @@
     "db:migrate": "node scripts/db-migrate.mjs",
     "db:seed": "node scripts/db-seed.mjs"
   },
+  "dependencies": {
+    "@aws-sdk/client-sqs": "3.1093.0"
+  },
   "packageManager": "pnpm@10.13.1"
 }
