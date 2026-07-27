@@ -62,6 +62,7 @@ export const createQueueRuntime = ({
     return enqueueSubmissionAttempt({
       ...params,
       source,
+      transport: config.transport,
       eventLogger,
       queueProducer
     });
