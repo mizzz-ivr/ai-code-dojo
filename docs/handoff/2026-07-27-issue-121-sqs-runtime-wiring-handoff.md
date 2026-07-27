@@ -7,8 +7,8 @@ AWS SDK for JavaScript v3を導入し、API起動時にHTTP / SQS queue transpor
 - Issue: #121
 - PR: #122
 - Branch: `feat/sqs-runtime-wiring`
-- PR状態: Draft
-- CI状態: コード・依存headでapp-quality成功、docs反映後のfinal head確認待ち
+- PR状態: Ready for review
+- CI状態: docs validation / frozen install / lint / typecheck / unit / integration / schema validation / build成功
 
 ## Implemented
 - `@aws-sdk/client-sqs` dependency
@@ -20,6 +20,7 @@ AWS SDK for JavaScript v3を導入し、API起動時にHTTP / SQS queue transpor
 - SQS client一回生成・再利用
 - Best-effort client destroy
 - HTTP default / rollback behavior
+- Message構築失敗eventのtransport注入
 - Config / runtime unit test
 - Runtime経由SQS outbox component integration test
 - Invalid startup configuration process integration test
@@ -88,7 +89,11 @@ Producer roleへReceiveMessage / DeleteMessage / PurgeQueue / queue管理権限�
 - Runtime→outbox dispatcher→SQS adapter
 - Published更新
 - Invalid API startup rejection
+- Message構築失敗eventの`transport=sqs`
 - QueueUrl / credentials / attempt key / code / hidden tests非出力
+
+## Review Finding
+共通message構築失敗時に既存enqueue helperがHTTP transportを固定記録していたため、runtime transportを注入する修正と回帰testを追加した。
 
 ## Review Focus
 - SQS選択時のoutbox必須化が妥当か。
@@ -108,12 +113,10 @@ Producer roleへReceiveMessage / DeleteMessage / PurgeQueue / queue管理権限�
 - Multiple API processではduplicate publishが発生し得る。
 
 ## Remaining Tasks
-1. Final headのdocs validation / app-qualityを確認する。
-2. PR #122本文を完成させる。
-3. PR #122をReady for reviewへ変更する。
-4. Issue #121へ実装・テスト結果をコメントする。
-5. Notion / Linear同期を確認する。
-6. Merge後にbranch cleanupを確認する。
+1. Ready状態同期後のfinal headでdocs validation / app-qualityを確認する。
+2. Issue #121へ実装・テスト結果をコメントする。
+3. Notion / Linear同期を確認する。
+4. Merge後にbranch cleanupを確認する。
 
 ## Next Recommended Issue
 1. SQS consumer / visibility timeout / DeleteMessage / DLQ PoC
