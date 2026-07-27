@@ -8,6 +8,7 @@ export const QUEUE_EVENTS = Object.freeze({
   VISIBILITY_EXTENDED: 'queue.visibility.extended',
   VISIBILITY_EXTENSION_FAILED: 'queue.visibility.extension_failed',
   ACK_SUCCEEDED: 'queue.ack.succeeded',
+  ACK_DEFERRED: 'queue.ack.deferred',
   ACK_FAILED: 'queue.ack.failed',
   CLAIM_SUCCEEDED: 'queue.claim.succeeded',
   CLAIM_NOOP: 'queue.claim.noop',
