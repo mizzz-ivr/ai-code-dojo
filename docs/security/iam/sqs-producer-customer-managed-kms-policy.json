@@ -1,0 +1,20 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowSendMessageToGradingQueue",
+      "Effect": "Allow",
+      "Action": "sqs:SendMessage",
+      "Resource": "arn:aws:sqs:<region>:<account-id>:<queue-name>"
+    },
+    {
+      "Sid": "AllowCustomerManagedQueueEncryptionKey",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Decrypt",
+        "kms:GenerateDataKey"
+      ],
+      "Resource": "arn:aws:kms:<region>:<account-id>:key/<key-id>"
+    }
+  ]
+}
