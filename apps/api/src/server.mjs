@@ -4,11 +4,24 @@ import { createSubmissionAndEnqueue, getSubmissionResult } from './services/subm
 import { listAdminChallenges, getAdminChallengeById, createAdminChallenge, createAdminChallengeVersion, setChallengePublishStatus, findPublishedChallengeBySlug } from './repositories/admin-challenge-repository.mjs';
 import { login, setSessionCookie, clearSessionCookie, getUserFromRequest } from './auth.mjs';
 import { loadQueueOutboxConfig } from './config/queue-outbox-config.mjs';
-import { startQueueOutboxDispatcher } from './services/queue-outbox-dispatcher.mjs';
+import { loadQueueTransportConfig } from './config/queue-transport-config.mjs';
+import { dispatchQueueOutboxBatch, startQueueOutboxDispatcher } from './services/queue-outbox-dispatcher.mjs';
+import { createQueueRuntime } from './services/queue-runtime.mjs';
 
 const port = Number(process.env.API_PORT ?? 8080);
 const queueOutboxConfig = loadQueueOutboxConfig();
-const queueOutboxDispatcher = startQueueOutboxDispatcher({ config: queueOutboxConfig });
+const queueTransportConfig = loadQueueTransportConfig(process.env, {
+  outboxEnabled: queueOutboxConfig.enabled
+});
+const queueRuntime = createQueueRuntime({ config: queueTransportConfig });
+const queueOutboxDispatcher = startQueueOutboxDispatcher({
+  config: queueOutboxConfig,
+  transport: queueRuntime.transport,
+  dispatch: (options) => dispatchQueueOutboxBatch({
+    ...options,
+    enqueue: queueRuntime.enqueue
+  })
+});
 
 const sendJson = (res, statusCode, payload) => {
   res.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' });
@@ -153,7 +166,8 @@ const server = http.createServer(async (req, res) => {
       const body = await parseBody(req);
       const result = await createSubmissionAndEnqueue(body, {
         outboxConfig: queueOutboxConfig,
-        dispatchOutbox: ({ trigger }) => queueOutboxDispatcher.trigger(trigger)
+        dispatchOutbox: ({ trigger }) => queueOutboxDispatcher.trigger(trigger),
+        enqueueLegacy: queueRuntime.enqueue
       });
       if (result.error) return sendJson(res, result.statusCode, { error: result.error });
       return sendJson(res, result.statusCode, result.data);
@@ -173,7 +187,10 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.on('close', () => queueOutboxDispatcher.stop());
+server.on('close', () => {
+  queueOutboxDispatcher.stop();
+  queueRuntime.close();
+});
 
 server.listen(port, () => {
   console.log(`api listening on http://localhost:${port}`);
