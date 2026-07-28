@@ -9,6 +9,7 @@
     "test:unit": "node --test tests/unit/**/*.test.mjs",
     "test:integration": "node scripts/run-integration-tests.mjs",
     "schema:validate": "node scripts/validate-problems.mjs",
+    "infra:validate": "node scripts/validate-sqs-cloudformation.mjs",
     "build": "node scripts/build.mjs",
     "dev:api": "node apps/api/src/server.mjs",
     "dev:worker": "node apps/worker/src/server.mjs",
