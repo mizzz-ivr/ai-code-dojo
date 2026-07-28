@@ -1,0 +1,439 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "ai-code-dojo grading queue, DLQ, and least-privilege workload roles",
+  "Parameters": {
+    "EnvironmentName": {
+      "Type": "String",
+      "Default": "dev",
+      "AllowedPattern": "^[a-z][a-z0-9-]{1,18}[a-z0-9]$",
+      "ConstraintDescription": "Use 3-20 lowercase alphanumeric or hyphen characters, starting with a letter and ending with an alphanumeric character."
+    },
+    "QueueType": {
+      "Type": "String",
+      "Default": "standard",
+      "AllowedValues": [
+        "standard",
+        "fifo"
+      ]
+    },
+    "MaxReceiveCount": {
+      "Type": "Number",
+      "Default": 5,
+      "MinValue": 1,
+      "MaxValue": 1000
+    },
+    "WorkloadServicePrincipal": {
+      "Type": "String",
+      "Default": "ecs-tasks.amazonaws.com",
+      "AllowedPattern": "^[a-z0-9][a-z0-9.-]+\\.amazonaws\\.com$",
+      "ConstraintDescription": "Use an AWS service principal such as ecs-tasks.amazonaws.com."
+    }
+  },
+  "Conditions": {
+    "IsFifo": {
+      "Fn::Equals": [
+        {
+          "Ref": "QueueType"
+        },
+        "fifo"
+      ]
+    }
+  },
+  "Resources": {
+    "DeadLetterQueue": {
+      "Type": "AWS::SQS::Queue",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "QueueName": {
+          "Fn::If": [
+            "IsFifo",
+            {
+              "Fn::Sub": "ai-code-dojo-${EnvironmentName}-grading-dlq.fifo"
+            },
+            {
+              "Fn::Sub": "ai-code-dojo-${EnvironmentName}-grading-dlq"
+            }
+          ]
+        },
+        "FifoQueue": {
+          "Fn::If": [
+            "IsFifo",
+            true,
+            false
+          ]
+        },
+        "SqsManagedSseEnabled": true,
+        "MessageRetentionPeriod": 1209600,
+        "ReceiveMessageWaitTimeSeconds": 20,
+        "VisibilityTimeout": 90,
+        "RedriveAllowPolicy": {
+          "redrivePermission": "byQueue",
+          "sourceQueueArns": [
+            {
+              "Fn::Sub": [
+                "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:${SourceQueueName}",
+                {
+                  "SourceQueueName": {
+                    "Fn::If": [
+                      "IsFifo",
+                      {
+                        "Fn::Sub": "ai-code-dojo-${EnvironmentName}-grading.fifo"
+                      },
+                      {
+                        "Fn::Sub": "ai-code-dojo-${EnvironmentName}-grading"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "Application",
+            "Value": "ai-code-dojo"
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "EnvironmentName"
+            }
+          },
+          {
+            "Key": "QueuePurpose",
+            "Value": "grading-dead-letter"
+          }
+        ]
+      }
+    },
+    "SourceQueue": {
+      "Type": "AWS::SQS::Queue",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "QueueName": {
+          "Fn::If": [
+            "IsFifo",
+            {
+              "Fn::Sub": "ai-code-dojo-${EnvironmentName}-grading.fifo"
+            },
+            {
+              "Fn::Sub": "ai-code-dojo-${EnvironmentName}-grading"
+            }
+          ]
+        },
+        "FifoQueue": {
+          "Fn::If": [
+            "IsFifo",
+            true,
+            false
+          ]
+        },
+        "SqsManagedSseEnabled": true,
+        "MessageRetentionPeriod": 345600,
+        "ReceiveMessageWaitTimeSeconds": 20,
+        "VisibilityTimeout": 90,
+        "RedrivePolicy": {
+          "deadLetterTargetArn": {
+            "Fn::GetAtt": [
+              "DeadLetterQueue",
+              "Arn"
+            ]
+          },
+          "maxReceiveCount": {
+            "Ref": "MaxReceiveCount"
+          }
+        },
+        "Tags": [
+          {
+            "Key": "Application",
+            "Value": "ai-code-dojo"
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "EnvironmentName"
+            }
+          },
+          {
+            "Key": "QueuePurpose",
+            "Value": "grading-source"
+          }
+        ]
+      }
+    },
+    "QueueTlsPolicy": {
+      "Type": "AWS::SQS::QueuePolicy",
+      "Properties": {
+        "Queues": [
+          {
+            "Ref": "SourceQueue"
+          },
+          {
+            "Ref": "DeadLetterQueue"
+          }
+        ],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "DenyInsecureTransport",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "sqs:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "SourceQueue",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::GetAtt": [
+                    "DeadLetterQueue",
+                    "Arn"
+                  ]
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "ProducerRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "Description": "ai-code-dojo API queue producer role",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": {
+                  "Ref": "WorkloadServicePrincipal"
+                }
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "SendToGradingSourceQueue",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "sqs:SendMessage"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "SourceQueue",
+                      "Arn"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Application",
+            "Value": "ai-code-dojo"
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "EnvironmentName"
+            }
+          },
+          {
+            "Key": "RolePurpose",
+            "Value": "grading-queue-producer"
+          }
+        ]
+      }
+    },
+    "ConsumerRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "Description": "ai-code-dojo Worker queue consumer role",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": {
+                  "Ref": "WorkloadServicePrincipal"
+                }
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ConsumeFromGradingSourceQueue",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "sqs:ReceiveMessage",
+                    "sqs:DeleteMessage",
+                    "sqs:ChangeMessageVisibility"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "SourceQueue",
+                      "Arn"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Application",
+            "Value": "ai-code-dojo"
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "EnvironmentName"
+            }
+          },
+          {
+            "Key": "RolePurpose",
+            "Value": "grading-queue-consumer"
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "SourceQueueUrl": {
+      "Description": "Set as API_SQS_QUEUE_URL and WORKER_SQS_QUEUE_URL.",
+      "Value": {
+        "Ref": "SourceQueue"
+      }
+    },
+    "SourceQueueArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "SourceQueue",
+          "Arn"
+        ]
+      }
+    },
+    "DeadLetterQueueUrl": {
+      "Value": {
+        "Ref": "DeadLetterQueue"
+      }
+    },
+    "DeadLetterQueueArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "DeadLetterQueue",
+          "Arn"
+        ]
+      }
+    },
+    "ProducerRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "ProducerRole",
+          "Arn"
+        ]
+      }
+    },
+    "ConsumerRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "ConsumerRole",
+          "Arn"
+        ]
+      }
+    },
+    "ApiRuntimeConfiguration": {
+      "Description": "Non-secret API environment configuration example.",
+      "Value": {
+        "Fn::Join": [
+          "\n",
+          [
+            "API_QUEUE_TRANSPORT=sqs",
+            "API_QUEUE_OUTBOX_ENABLED=1",
+            {
+              "Fn::Sub": "API_SQS_REGION=${AWS::Region}"
+            },
+            {
+              "Fn::Join": [
+                "",
+                [
+                  "API_SQS_QUEUE_URL=",
+                  {
+                    "Ref": "SourceQueue"
+                  }
+                ]
+              ]
+            },
+            {
+              "Fn::Join": [
+                "",
+                [
+                  "API_SQS_QUEUE_TYPE=",
+                  {
+                    "Ref": "QueueType"
+                  }
+                ]
+              ]
+            }
+          ]
+        ]
+      }
+    },
+    "WorkerRuntimeConfiguration": {
+      "Description": "Non-secret Worker environment configuration example.",
+      "Value": {
+        "Fn::Join": [
+          "\n",
+          [
+            "WORKER_QUEUE_CONSUMER=sqs",
+            {
+              "Fn::Sub": "WORKER_SQS_REGION=${AWS::Region}"
+            },
+            {
+              "Fn::Join": [
+                "",
+                [
+                  "WORKER_SQS_QUEUE_URL=",
+                  {
+                    "Ref": "SourceQueue"
+                  }
+                ]
+              ]
+            },
+            "WORKER_SQS_WAIT_TIME_SECONDS=20",
+            "WORKER_SQS_VISIBILITY_TIMEOUT_SECONDS=90",
+            "WORKER_SQS_VISIBILITY_HEARTBEAT_SECONDS=30"
+          ]
+        ]
+      }
+    }
+  }
+}
