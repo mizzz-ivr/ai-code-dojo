@@ -1,6 +1,6 @@
 # current-status（正本）
 
-最終更新: 2026-07-28（Issue #125 SQS CloudFormation infrastructureを実装中）
+最終更新: 2026-07-28（Issue #125 SQS CloudFormation infrastructureをレビュー中）
 
 ## この文書の目的
 
@@ -16,7 +16,7 @@
 - Issue #119 / PR #120でSQS producer adapter PoCをmerge済み。
 - Issue #121 / PR #122でAWS SDK v3とAPI queue transport runtime wiringをmerge済み。
 - Issue #123 / PR #124でWorker SQS consumer PoCをmerge済み。
-- Issue #125 / PR #126でSQS source queue / DLQ / RedrivePolicy / IAM roleのCloudFormation IaCを実装中。
+- Issue #125 / PR #126でSQS source queue / DLQ / RedrivePolicy / IAM roleのCloudFormation IaCを実装し、Ready for review。
 - API直接実行禁止、hidden tests非公開、challenge version追加方式の不変条件を維持する。
 
 ## 実装済みのqueue runtime
@@ -73,7 +73,7 @@
 
 ## Test・validation状況
 
-Initial PR headで以下は成功済み。
+Final PR headで以下は成功済み。
 
 - Docs validation
 - Frozen lockfile install
@@ -84,6 +84,8 @@ Initial PR headで以下は成功済み。
 - Schema validation
 - Infra validation
 - Build
+
+Integration testはdocs更新後の初回実行で一時失敗したが、failed jobのみ再実行して成功を確認した。
 
 Static validatorは次を検査する。
 
@@ -114,7 +116,7 @@ Static validatorは次を検査する。
 
 ## 優先順位（直近）
 
-1. Issue #125 / PR #126をfinal CI成功・Ready for reviewへ進める。
+1. Issue #125 / PR #126をレビュー・mergeする。
 2. 限定環境のdeployment wiringとGitHub OIDC deployment roleを別Issueで整備する。
 3. Worker application retry producerを選択queue runtimeへ統合する。
 4. DLQ replay / purge運用を整備する。
