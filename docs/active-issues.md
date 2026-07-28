@@ -1,6 +1,6 @@
 # active-issues（正本）
 
-最終更新: 2026-07-28（Issue #125 SQS CloudFormation infrastructureを実装中）
+最終更新: 2026-07-28（Issue #125 SQS CloudFormation infrastructureをレビュー中）
 
 ## この文書の目的
 
@@ -17,9 +17,9 @@
 ### #125 SQS source queue・DLQ・RedrivePolicy・最小IAM roleをCloudFormationで管理する
 
 - 優先度: P2
-- 状態: Open / Implementation
+- 状態: Open / Review
 - GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/125`
-- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/126`（Draft）
+- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/126`（Ready for review）
 - 作業branch: `feat/sqs-cloudformation-infra`
 - 目的: Issue #123で完成したSQS producer / consumer runtimeに対応するsource queue、DLQ、redrive、TLS deny、producer / consumer workload roleを再現可能なCloudFormationとして管理する。
 
@@ -80,7 +80,7 @@
 
 #### 現在の確認結果
 
-Initial PR head:
+Final PR head:
 
 - Docs validation: Success
 - Frozen lockfile install: Success
@@ -91,6 +91,8 @@ Initial PR head:
 - Schema validation: Success
 - Infra validation: Success
 - Build: Success
+
+Integrationはdocs更新後の初回実行で一時失敗したが、failed jobのみ再実行して成功を確認した。
 
 ## Recently Completed
 
