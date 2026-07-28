@@ -64,8 +64,20 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm schema:validate
 
+  infra-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm infra:validate
+
   build:
-    needs: [lint, typecheck, unit-test, integration-test, schema-validation]
+    needs: [lint, typecheck, unit-test, integration-test, schema-validation, infra-validation]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
