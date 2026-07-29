@@ -9,9 +9,12 @@ SQS source queue、DLQ、RedrivePolicy、TLS deny、producer / consumer最小IAM
 - Issue: #125
 - PR: #126
 - Branch: `feat/sqs-cloudformation-infra`
-- PR状態: Draft
+- PR状態: Ready for review
+- PR mergeable: true
 - Production transport: HTTPのまま
 - 実AWS deploy: 未実施
+- Notion: `https://app.notion.com/p/3ac7322f39fa81f48996e91be4913479`
+- Linear: workspaceの無料Issue上限により新規登録不可
 
 ## Main Files
 
@@ -108,9 +111,10 @@ pnpm infra:validate
 
 app-qualityへ`infra-validation` jobを追加し、buildはinfra-validation成功を必須とする。
 
-Initial PR head:
+Ready移行前のfinal code / docs head:
 
 - Docs validation: Success
+- Frozen lockfile install: Success
 - Lint: Success
 - Typecheck: Success
 - Unit: Success
@@ -118,6 +122,8 @@ Initial PR head:
 - Schema validation: Success
 - Infra validation: Success
 - Build: Success
+
+Integrationはdocs更新後の初回実行で一時失敗したが、failed job再実行で成功した。
 
 ## Deployment Boundary
 
@@ -137,6 +143,13 @@ Initial PR head:
 - Stack削除後もsource / DLQはRetainされる。
 - Queue削除はdepth、DLQ、参照、保存要件、明示承認を確認後に行う。
 
+## Management Boundary
+
+- GitHub Issue #125とPR #126を実装・レビュー状態の正本とする。
+- Repository canonical docsをアーキテクチャ・運用状態の正本とする。
+- Notionへレビュー用の要約を同期済み。
+- Linearは無料Issue上限により登録できないため、上限解消までは同期対象外とする。
+
 ## Risks
 
 - 実AWS accountのSCP、quota、permission boundary、queue名衝突は未検証。
@@ -148,13 +161,10 @@ Initial PR head:
 
 ## Remaining Tasks
 
-1. Canonical docs更新
-2. Final head CI確認
-3. PR本文完成
-4. PRをReady for reviewへ変更
-5. Issueコメント
-6. Notion / Linear同期
-7. Merge後branch cleanup
+1. 最新管理同期headのCIを確認する。
+2. Issue #125へ実装・CI・Notion・Linear制約をコメントする。
+3. PRレビュー後にmergeする。
+4. Merge後にIssue close、docs完了同期、branch cleanupを行う。
 
 ## Next Recommended Issue
 
