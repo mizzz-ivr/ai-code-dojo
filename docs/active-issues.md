@@ -20,6 +20,8 @@
 - 状態: Open / Review
 - GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/125`
 - GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/126`（Ready for review）
+- Notion: `https://app.notion.com/p/3ac7322f39fa81f48996e91be4913479`
+- Linear: workspaceの無料Issue上限により新規登録不可。GitHub / Repository docs / Notionを管理正本とする。
 - 作業branch: `feat/sqs-cloudformation-infra`
 - 目的: Issue #123で完成したSQS producer / consumer runtimeに対応するsource queue、DLQ、redrive、TLS deny、producer / consumer workload roleを再現可能なCloudFormationとして管理する。
 
@@ -80,7 +82,7 @@
 
 #### 現在の確認結果
 
-Final PR head:
+Ready移行前のfinal code / docs head:
 
 - Docs validation: Success
 - Frozen lockfile install: Success
