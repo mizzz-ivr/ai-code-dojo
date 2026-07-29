@@ -9,8 +9,11 @@ Issue #123 / PR #124で完成したSQS producer / consumer runtimeに対応す�
 - Issue: #125
 - PR: #126
 - Branch: `feat/sqs-cloudformation-infra`
-- PR状態: Draft
+- PR状態: Ready for review
 - Production transport: HTTPのまま
+- 実AWS deploy: 未実施
+- Notion: `https://app.notion.com/p/3ac7322f39fa81f48996e91be4913479`
+- Linear: workspaceの無料Issue上限により新規登録不可
 
 ## Implemented
 
@@ -60,7 +63,7 @@ Issue #123 / PR #124で完成したSQS producer / consumer runtimeに対応す�
 
 ## Validation
 
-Initial PR head:
+Ready移行前のfinal code / docs head:
 
 - docs validation: Success
 - frozen install: Success
@@ -71,6 +74,17 @@ Initial PR head:
 - schema validation: Success
 - infra validation: Success
 - build: Success
+
+Integration testはdocs更新後の初回実行で一時失敗したが、機能差分のない更新だったためfailed jobのみ再実行し、成功を確認した。
+
+## Management Sync
+
+- GitHub Issue #125を作成済み。
+- GitHub PR #126をReady for reviewへ変更済み。
+- PR本文へ目的、背景、変更内容、影響範囲、テスト、rollout、rollback、レビュー観点、未対応事項を記載済み。
+- Notionへ設計、CI、deployment境界、rollback、リスクを同期済み。
+- Linearは重複検索後に作成を試みたが、workspaceの無料Issue上限により登録できなかった。
+- Linear復旧まではGitHub Issue / PR、Repository docs、Notionを管理正本とする。
 
 ## Risks
 
@@ -84,13 +98,10 @@ Initial PR head:
 
 ## Remaining Tasks
 
-- Canonical docs更新
-- PR本文完成
-- Final head CI確認
-- PRをReady for reviewへ変更
-- Issue #125へ実装・CI結果をコメント
-- Notion同期
-- Linear登録可否確認
+- 最新管理同期headのCI確認
+- Issue #125へ実装・CI・Notion・Linear制約をコメント
+- PRレビューとmerge
+- Merge後のIssue close、docs完了同期、branch cleanup
 
 ## Next Recommended Issues
 
