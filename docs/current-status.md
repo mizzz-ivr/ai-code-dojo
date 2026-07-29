@@ -17,6 +17,8 @@
 - Issue #121 / PR #122でAWS SDK v3とAPI queue transport runtime wiringをmerge済み。
 - Issue #123 / PR #124でWorker SQS consumer PoCをmerge済み。
 - Issue #125 / PR #126でSQS source queue / DLQ / RedrivePolicy / IAM roleのCloudFormation IaCを実装し、Ready for review。
+- Issue #125の設計・CI・rollout境界はNotionへ同期済み。
+- Linearはworkspaceの無料Issue上限によりIssue #125相当を新規登録できないため、GitHub Issue / PR、Repository docs、Notionを管理正本とする。
 - API直接実行禁止、hidden tests非公開、challenge version追加方式の不変条件を維持する。
 
 ## 実装済みのqueue runtime
@@ -73,7 +75,7 @@
 
 ## Test・validation状況
 
-Final PR headで以下は成功済み。
+Ready移行前のfinal code / docs headで以下は成功済み。
 
 - Docs validation
 - Frozen lockfile install
@@ -112,6 +114,7 @@ Static validatorは次を検査する。
 - Queue / outbox metrics backend、dashboard、alertは未実装。
 - Outbox claim / leaseは未実装。
 - Retained queueのinventory / cleanup運用が必要。
+- Linearへの新規Issue登録は無料Issue上限により停止中。
 - SQLite fileを複数ホストから共有する運用は前提にしない。
 
 ## 優先順位（直近）
@@ -136,6 +139,7 @@ Static validatorは次を検査する。
 - Repository: `https://github.com/mizzz-ivr/ai-code-dojo`
 - Issue #125: `https://github.com/mizzz-ivr/ai-code-dojo/issues/125`
 - PR #126: `https://github.com/mizzz-ivr/ai-code-dojo/pull/126`
+- Notion: `https://app.notion.com/p/3ac7322f39fa81f48996e91be4913479`
 - CloudFormation template: `infra/aws/cloudformation/sqs-queue-stack.json`
 - CloudFormation runbook: `docs/runbooks/2026-07-28-sqs-cloudformation-infra-runbook.md`
 - SQS consumer runbook: `docs/runbooks/2026-07-28-sqs-consumer-poc-runbook.md`
