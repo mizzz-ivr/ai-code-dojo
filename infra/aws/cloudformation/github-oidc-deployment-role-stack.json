@@ -176,6 +176,9 @@
                           "Arn"
                         ]
                       }
+                    },
+                    "StringLike": {
+                      "cloudformation:ChangeSetName": "ai-code-dojo-staging-*"
                     }
                   }
                 },
@@ -196,7 +199,12 @@
                   "Effect": "Allow",
                   "Action": "cloudformation:DescribeChangeSet",
                   "Resource": {
-                    "Fn::Sub": "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:changeSet/ai-code-dojo-staging-*/*"
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${TargetStackName}/*"
+                  },
+                  "Condition": {
+                    "StringLike": {
+                      "cloudformation:ChangeSetName": "ai-code-dojo-staging-*"
+                    }
                   }
                 }
               ]
