@@ -1,6 +1,6 @@
 # current-status（正本）
 
-最終更新: 2026-07-28（Issue #123 SQS consumer PoCをレビュー中）
+最終更新: 2026-07-28（Issue #125 SQS CloudFormation infrastructureをレビュー中）
 
 ## この文書の目的
 
@@ -10,95 +10,138 @@
 
 - Repositoryのcanonical full nameは `mizzz-ivr/ai-code-dojo`。
 - ai-code-dojoは、AI生成コードのバグ修正・機能追加を実務フローで学ぶ練習プラットフォームとしてMVP運用を継続中。
-- docs正本は `README.md` / `docs/project-overview.md` / `docs/current-status.md` / `docs/active-issues.md` / `docs/architecture/system-overview.md`。
+- Docs正本は `README.md` / `docs/project-overview.md` / `docs/current-status.md` / `docs/active-issues.md` / `docs/architecture/system-overview.md`。
 - Attempt idempotency key、completion guard、processing lease / heartbeat、stale running自動回収まで実装済み。
-- Queue message contract、producer port、構造化event、application retry backoff、transactional outboxまで実装済み。
-- Issue #119 / PR #120でSQS producer adapter PoCを実装・merge済み。
-- Issue #121 / PR #122でAWS SDK v3とAPI queue transport runtime wiringを実装・merge済み。
-- Issue #123 / PR #124でWorker SQS consumer PoCを実装し、Ready for review。
+- Queue message contract、producer / consumer runtime、構造化event、application retry backoff、transactional outboxまで実装済み。
+- Issue #119 / PR #120でSQS producer adapter PoCをmerge済み。
+- Issue #121 / PR #122でAWS SDK v3とAPI queue transport runtime wiringをmerge済み。
+- Issue #123 / PR #124でWorker SQS consumer PoCをmerge済み。
+- Issue #125 / PR #126でSQS source queue / DLQ / RedrivePolicy / IAM roleのCloudFormation IaCを実装し、Ready for review。
+- Issue #125の設計・CI・rollout境界はNotionへ同期済み。
+- Linearはworkspaceの無料Issue上限によりIssue #125相当を新規登録できないため、GitHub Issue / PR、Repository docs、Notionを管理正本とする。
 - API直接実行禁止、hidden tests非公開、challenge version追加方式の不変条件を維持する。
 
-## 実装済みのproducer基盤
+## 実装済みのqueue runtime
+
+### Producer
 
 - Queue message schema version 1はsubmission ID / grading attempt / attempt idempotency key / optional correlation IDだけを許可する。
 - `API_QUEUE_TRANSPORT`の既定値は`http`であり、既存HTTP adapterをrollback先として維持する。
-- SQS選択時は`API_QUEUE_OUTBOX_ENABLED=1`を必須とし、submissionとpublish intentを先にatomic保存する。
-- SQS runtimeはAPI process内で一つの`SQSClient`を生成し、legacy enqueueとoutbox dispatcherで共有する。
+- SQS選択時は`API_QUEUE_OUTBOX_ENABLED=1`を必須とする。
+- API process単位で一つの`SQSClient`を生成し、legacy enqueueとoutbox dispatcherで共有する。
 - AWS credentialsはAWS SDK v3のdefault credential provider chainへ委譲する。
 - SQS send成功時だけoutboxをpublishedへ更新し、失敗時はpendingを維持する。
-- Duplicate publish / deliveryを許容し、Worker DB fencingで二重採点を防止する。
 
-## Issue #123 / PR #124の変更
+### Consumer
 
-- `WORKER_QUEUE_CONSUMER=http|sqs`を追加し、既定値を`http`とする。
-- HTTP選択時はAWS clientを生成しない。
-- SQS選択時にregion、absolute HTTPS QueueUrl、long polling、visibility timeout、visibility heartbeatを検証する。
-- Worker process単位で一つのSQS clientを生成・再利用する。
-- `ReceiveMessage`は一件ずつlong pollingし、`ApproximateReceiveCount`を取得する。
-- SQS envelopeとBodyを共通queue message parserで検証する。
-- 処理中は`ChangeMessageVisibility`をbest-effortで実行する。
+- `WORKER_QUEUE_CONSUMER`の既定値は`http`であり、`POST /jobs`をrollback先として維持する。
+- SQSでは一件ずつlong pollingし、共通queue message contractで検証する。
+- Processing中はqueue visibilityをbest-effort延長する。
 - DB terminal保存、retry処理完了、安全なno-op確認後だけ最新ReceiptHandleで`DeleteMessage`する。
-- Invalid message、unexpected error、DB ownership喪失、保存未確認ではackを保留する。
-- HTTP `POST /jobs`、queued recovery、stale scannerをrollback / safety netとして維持する。
-- Consumer eventへMessageId / delivery countを追加し、ReceiptHandleはallowlistへ追加しない。
-- Consumer最小IAM policy例とDLQ RedrivePolicy運用runbookを追加する。
+- Invalid message、unexpected error、DB ownership喪失、保存未確認ではmessageを削除しない。
+- DB processing lease / attempt fencing / completion guardを採点correctnessの正本として維持する。
+
+## Issue #125 / PR #126の変更
+
+- `infra/aws/cloudformation/sqs-queue-stack.json`を追加する。
+- Standard / FIFOを`QueueType` parameterで選択可能にする。
+- Source queueとDLQを同じqueue typeで作成する。
+- Source queueはretention 4日、long polling 20秒、visibility 90秒とする。
+- DLQはretention 14日、`RedriveAllowPolicy=byQueue`とする。
+- `MaxReceiveCount`既定値を5とする。
+- Source / DLQ双方でSQS-managed SSEを有効化する。
+- Queue policyで`aws:SecureTransport=false`を拒否する。
+- Producer roleはsource queueへの`SendMessage`だけを許可する。
+- Consumer roleはsource queueへの`ReceiveMessage` / `DeleteMessage` / `ChangeMessageVisibility`だけを許可する。
+- Queue削除・置換時は`Retain`してmessage消失を防ぐ。
+- Stack outputsでQueueUrl / QueueArn / RoleArn / runtime設定例を提供する。
+- `pnpm infra:validate`でAWS credentials不要のstatic validationを行う。
+- App qualityへ`infra-validation` jobを追加する。
+- Build artifactへ`infra`を含める。
+- AWS CLI validate / change set / execute / rollback / retained queue cleanupをrunbook化する。
 
 ## Correctness・セキュリティ境界
 
 - Queue visibility timeoutはdelivery availabilityを担う。
 - DB processing leaseはcurrent attemptの実行所有権を担う。
 - Attempt idempotency keyとcompletion guardが採点correctnessを担う。
-- Visibility延長失敗だけではDB結果保存を抑止しない。
-- DB ownership喪失時は結果保存とackを抑止する。
-- Exactly-once deliveryへ依存しない。
+- Exactly-once publish / deliveryへ依存しない。
 - Transport retryでgrading attempt / attempt keyを変更しない。
 - Queue message / eventへcode / tests / secret / credentials / QueueUrl / ReceiptHandle / raw attempt key / raw SDK errorを記録しない。
 - Learnerへqueue / outbox / DLQ / delivery count / internal errorを返さない。
 - DLQとsubmission `infra_failed`を分離する。
+- Producer / consumer roleを分離し、wildcard resource、PurgeQueue、queue管理、DLQ read権限を付与しない。
+- CIから実AWS resourceを作成しない。
 
-## Test状況
+## Test・validation状況
 
-- Config / consumer / runtime unit testを追加済み。
-- Long polling→message validation→safe no-op→DeleteMessageのcomponent integrationを追加済み。
-- Invalid contractを非削除とし、機微情報をeventへ出さないことを確認済み。
-- DeleteMessage失敗時の非削除と一般化eventを確認済み。
-- 不正SQS設定でWorkerがlisten前に終了するstartup testを追加済み。
-- 既存stale recovery integrationの一時SQLite busyはtest polling helperで再試行する。
-- Docs validation / frozen install / lint / typecheck / unit / integration / schema validation / buildは成功済み。
+Ready移行前のfinal code / docs headで以下は成功済み。
+
+- Docs validation
+- Frozen lockfile install
+- Lint
+- Typecheck
+- Unit test
+- Integration test
+- Schema validation
+- Infra validation
+- Build
+
+Integration testはdocs更新後の初回実行で一時失敗したが、failed jobのみ再実行して成功を確認した。
+
+Static validatorは次を検査する。
+
+- CloudFormation JSON構文
+- Standard / FIFO命名とtype一致
+- SSE / retention / long polling / visibility
+- RedrivePolicy / RedriveAllowPolicy
+- Source ARN組み立てによる循環依存回避
+- TLS deny
+- IAM action / resource完全一致
+- Stack outputs
+- Literal account ID / access key ID不在
 
 ## 現時点の非対応・運用制約
 
-- 実AWS source queue / DLQ / RedrivePolicy / IAM role / KMS key / VPC endpointは作成しない。
+- 実AWS accountへのstack create / update / deleteは未実施。
 - Production deploymentはHTTP producer / consumerのまま。
+- GitHub OIDC provider / deployment roleは未実装。
+- ECS / Lambda / EC2 workloadとIAM roleの関連付けは未実装。
+- VPC endpoint / network pathは未実装。
+- Customer managed KMS key / key policyは未実装。
 - DLQ replay / purge API・UIは未実装。
 - Worker application retry producerはHTTP self-enqueueを維持する。
 - Queue / outbox metrics backend、dashboard、alertは未実装。
-- Outbox claim / leaseは未実装で、複数API process間のduplicate publishを許容する。
+- Outbox claim / leaseは未実装。
+- Retained queueのinventory / cleanup運用が必要。
+- Linearへの新規Issue登録は無料Issue上限により停止中。
 - SQLite fileを複数ホストから共有する運用は前提にしない。
 
 ## 優先順位（直近）
 
-1. Issue #123 / PR #124をレビュー・mergeする。
-2. SQS source queue / DLQ / RedrivePolicy / IAM role / deployment IaCを別Issueで整備する。
+1. Issue #125 / PR #126をレビュー・mergeする。
+2. 限定環境のdeployment wiringとGitHub OIDC deployment roleを別Issueで整備する。
 3. Worker application retry producerを選択queue runtimeへ統合する。
 4. DLQ replay / purge運用を整備する。
-5. Outbox claim / leaseを追加する。
-6. Queue / outbox eventをmetrics backend / dashboard / alertへ接続する。
+5. Queue / outbox eventをmetrics backend / dashboard / alertへ接続する。
+6. Outbox claim / leaseを追加する。
 7. Runner隔離強化とhidden tests漏洩防止を継続する。
 
-## branch cleanup 状態
+## Branch cleanup 状態
 
-- PR #122は2026-07-28（日本時間）にmerge済み。
-- PR #122のhead branch `feat/sqs-runtime-wiring` は削除確認対象。
-- Issue #123の作業branchは `feat/sqs-consumer-poc`。
-- PR #124 merge後にhead branchを削除する。
+- PR #124は2026-07-28（日本時間）にmerge済み。
+- PR #124のhead branch `feat/sqs-consumer-poc` は削除済み。
+- Issue #125の作業branchは `feat/sqs-cloudformation-infra`。
+- PR #126 merge後にhead branchを削除する。
 
 ## 参照先
 
 - Repository: `https://github.com/mizzz-ivr/ai-code-dojo`
-- Issue #123: `https://github.com/mizzz-ivr/ai-code-dojo/issues/123`
-- PR #124: `https://github.com/mizzz-ivr/ai-code-dojo/pull/124`
+- Issue #125: `https://github.com/mizzz-ivr/ai-code-dojo/issues/125`
+- PR #126: `https://github.com/mizzz-ivr/ai-code-dojo/pull/126`
+- Notion: `https://app.notion.com/p/3ac7322f39fa81f48996e91be4913479`
+- CloudFormation template: `infra/aws/cloudformation/sqs-queue-stack.json`
+- CloudFormation runbook: `docs/runbooks/2026-07-28-sqs-cloudformation-infra-runbook.md`
 - SQS consumer runbook: `docs/runbooks/2026-07-28-sqs-consumer-poc-runbook.md`
-- SQS runtime wiring: `docs/runbooks/2026-07-27-sqs-runtime-wiring-runbook.md`
 - Queue運用設計: `docs/reports/2026-07-23-queue-operations-visibility-dlq-backoff-design.md`
 - Worker障害復旧: `docs/runbooks/2026-05-18-worker-failure-recovery-runbook.md`
