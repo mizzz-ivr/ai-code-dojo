@@ -99,6 +99,27 @@ secrets.AWS_SECRET_ACCESS_KEY
   assert.equal(includesError(errors, 'must not reference AWS secret access key secrets'), true);
 });
 
+test('workflowは手動入力をshellへ直接展開せず環境変数へ隔離する', async () => {
+  const workflow = await loadWorkflow();
+  const maxReceiveCountExpressions =
+    workflow.match(/\$\{\{ inputs\.max_receive_count \}\}/g) ?? [];
+  const queueTypeExpressions =
+    workflow.match(/\$\{\{ inputs\.queue_type \}\}/g) ?? [];
+
+  assert.equal(maxReceiveCountExpressions.length, 1);
+  assert.equal(queueTypeExpressions.length, 1);
+  assert.equal(
+    workflow.includes('INPUT_MAX_RECEIVE_COUNT: ${{ inputs.max_receive_count }}'),
+    true
+  );
+  assert.equal(
+    workflow.includes('INPUT_QUEUE_TYPE: ${{ inputs.queue_type }}'),
+    true
+  );
+  assert.equal(workflow.includes('"${{ inputs.max_receive_count }}"'), false);
+  assert.equal(workflow.includes('"${{ inputs.queue_type }}"'), false);
+});
+
 test('validatorは固定account IDとaccess key IDの混入を拒否する', async () => {
   const template = await loadTemplate();
   template.Metadata = {
