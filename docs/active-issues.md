@@ -1,6 +1,6 @@
 # active-issues（正本）
 
-最終更新: 2026-07-30（Issue #127 GitHub OIDC staging change setを実装中）
+最終更新: 2026-07-30（Issue #127 / PR #128 GitHub OIDC staging change setの品質ゲート成功）
 
 ## この文書の目的
 
@@ -17,9 +17,9 @@
 ### #127 限定環境向けGitHub OIDC認証とSQS change set workflowを整備する
 
 - 優先度: P2
-- 状態: Open / Implementation
+- 状態: Open / Review
 - GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/127`
-- GitHub PR: 作成予定
+- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/128`
 - Notion: `https://app.notion.com/p/3ad7322f39fa813ab90ef7e9a7f64ec2`
 - Linear: workspaceの無料Issue上限により新規登録不可。GitHub / Repository docs / Notionを管理正本とする。
 - 作業branch: `feat/staging-oidc-change-set`
@@ -29,7 +29,7 @@
 
 - `infra/aws/cloudformation/github-oidc-deployment-role-stack.json`
 - Existing GitHub OIDC provider ARN parameter
-- Exact staging GitHub OIDC subject parameter
+- `mizzz-ivr/ai-code-dojo`のlegacy / immutable staging GitHub OIDC subject parameter
 - OIDC `aud=sts.amazonaws.com` / `sub`完全一致
 - GitHub Actions deployment role
 - CloudFormation execution role
@@ -41,8 +41,9 @@
 - `validate-template` / CREATE・UPDATE change set / describe summary
 - Change set no-change処理
 - Account ID masking
+- Workflow inputの環境変数隔離
 - Static template / workflow validator
-- Security regression unit test
+- Security regression unit test 8件
 - `pnpm infra:validate`統合
 - Staging OIDC bootstrap / change set review runbook
 - Current-status / active-issues / logs / ai-prompts / handoff / Notion
@@ -67,33 +68,43 @@
 #### 完了条件
 
 - `GitHubOidcProviderArn` / `GitHubOidcSubject`に既定値がない。
-- Subject patternはstaging Environmentの完全一致形式だけを許可しwildcardを拒否する。
+- Subject patternは対象Repositoryのlegacy / immutable形式とstaging Environmentだけを許可しwildcardを拒否する。
 - Trust policyは`StringEquals`でaud / subを完全一致させる。
 - Deployment roleとCloudFormation execution roleを分離する。
 - Deployment roleはValidateTemplate / CreateChangeSet / read / scoped PassRoleだけを持つ。
 - Deployment roleにExecuteChangeSet / CreateStack / UpdateStack / DeleteStackがない。
 - `iam:PassRole`は対象execution roleと`cloudformation.amazonaws.com`だけに限定する。
 - Execution roleのSQS / IAM resourceがstaging target stack範囲に限定される。
+- `DescribeChangeSet`はtarget stack ARNとgenerated change set name conditionに限定される。
 - Workflowは`workflow_dispatch`専用でmain以外を拒否する。
 - WorkflowはGitHub Environment `staging`とOIDCを使用する。
 - WorkflowはAWS access key secretを参照しない。
+- Workflow inputをshellへ直接展開しない。
 - Workflowはchange setを作成・要約するがexecuteしない。
 - 通常PR CIからAWS APIを呼び出さない。
-- Validatorがwildcard subject、trust緩和、権限拡大、direct execute、長期credential参照を拒否する。
+- Validatorが別Repository / wildcard subject、trust緩和、権限拡大、direct execute、長期credential参照を拒否する。
 - Docs validation / frozen install / lint / typecheck / unit / integration / schema validation / infra validation / buildが成功する。
 
 #### 現在の確認結果
 
 - GitHub Issue #127: Created
+- GitHub PR #128: Created / mergeable
 - Linear Issue: 無料Issue上限により作成失敗
-- Notion page: Created
+- Notion page: Created / PR・CI結果同期済み
 - OIDC deployment template: Added
 - Review-only workflow: Added
 - Static validator: Added
-- Security regression unit test: 7 / 7 success（ローカル）
-- `infra:validate` integration: Added
+- Security regression unit test: 8件追加 / CI success
+- `infra:validate` integration: Added / CI success
 - Runbook / log / prompt / handoff: Added
-- PR CI: 未確認
+- Docs validation: Success
+- Lint: Success
+- Typecheck: Success
+- Unit test: Success
+- Integration test: Success
+- Schema validation: Success
+- Infra validation: Success
+- Build: Success
 - 実AWS validation / change set: 未実施
 
 ## Recently Completed
@@ -176,5 +187,5 @@
 
 - PR #124のhead branch `feat/sqs-consumer-poc` は削除済み。
 - PR #126のhead branch `feat/sqs-cloudformation-infra` は削除確認対象。
-- Issue #127のhead branchは `feat/staging-oidc-change-set`。
-- Issue #127 merge後にhead branchを削除する。
+- Issue #127 / PR #128のhead branchは `feat/staging-oidc-change-set`。
+- PR #128 merge後にhead branchを削除する。
