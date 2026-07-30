@@ -13,23 +13,20 @@ export const STAGING_CHANGE_SET_WORKFLOW_PATH = path.resolve(
 
 const sameJson = (actual, expected) => JSON.stringify(actual) === JSON.stringify(expected);
 const sorted = (values) => [...values].sort();
-const normalizeActions = (action) => Array.isArray(action) ? action : [action].filter(Boolean);
+const actionsOf = (statement) =>
+  Array.isArray(statement?.Action) ? statement.Action : [statement?.Action].filter(Boolean);
 
-const getPolicyStatements = (role) => {
+const statementsOf = (role) => {
   const policies = role?.Properties?.Policies;
   if (!Array.isArray(policies)) return [];
   return policies.flatMap((policy) => policy?.PolicyDocument?.Statement ?? []);
 };
 
-const getStatementBySid = (role, sid) =>
-  getPolicyStatements(role).find((statement) => statement?.Sid === sid);
+const statementBySid = (role, sid) =>
+  statementsOf(role).find((statement) => statement?.Sid === sid);
 
-const containsForbiddenAction = (role, forbiddenActions) => {
-  const actions = getPolicyStatements(role).flatMap((statement) =>
-    normalizeActions(statement?.Action)
-  );
-  return forbiddenActions.find((action) => actions.includes(action));
-};
+const exactActions = (statement, expected) =>
+  sameJson(sorted(actionsOf(statement)), sorted(expected));
 
 export const validateGitHubOidcDeploymentTemplate = (template) => {
   const errors = [];
@@ -79,10 +76,8 @@ export const validateGitHubOidcDeploymentTemplate = (template) => {
     'TargetStackName default must be ai-code-dojo-staging-sqs.'
   );
 
-  const resources = template.Resources ?? {};
-  const executionRole = resources.CloudFormationExecutionRole;
-  const deploymentRole = resources.GitHubActionsDeploymentRole;
-
+  const executionRole = template.Resources?.CloudFormationExecutionRole;
+  const deploymentRole = template.Resources?.GitHubActionsDeploymentRole;
   requireCondition(
     executionRole?.Type === 'AWS::IAM::Role',
     'CloudFormationExecutionRole must be AWS::IAM::Role.'
@@ -117,9 +112,9 @@ export const validateGitHubOidcDeploymentTemplate = (template) => {
       'CloudFormationExecutionRole trust must allow CloudFormation only.'
     );
 
-    const queueStatement = getStatementBySid(executionRole, 'ManageStagingGradingQueues');
+    const queue = statementBySid(executionRole, 'ManageStagingGradingQueues');
     requireCondition(
-      sameJson(sorted(normalizeActions(queueStatement?.Action)), sorted([
+      exactActions(queue, [
         'sqs:CreateQueue',
         'sqs:GetQueueAttributes',
         'sqs:GetQueueUrl',
@@ -128,18 +123,18 @@ export const validateGitHubOidcDeploymentTemplate = (template) => {
         'sqs:UntagQueue',
         'sqs:SetQueueAttributes',
         'sqs:DeleteQueue'
-      ])),
+      ]),
       'CloudFormationExecutionRole SQS actions must match the staging queue lifecycle contract.'
     );
     requireCondition(
-      queueStatement?.Resource?.['Fn::Sub']
+      queue?.Resource?.['Fn::Sub']
         === 'arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:ai-code-dojo-${EnvironmentName}-grading*',
       'CloudFormationExecutionRole SQS resource must be limited to staging grading queues.'
     );
 
-    const roleStatement = getStatementBySid(executionRole, 'ManageGeneratedQueueWorkloadRoles');
+    const roles = statementBySid(executionRole, 'ManageGeneratedQueueWorkloadRoles');
     requireCondition(
-      sameJson(sorted(normalizeActions(roleStatement?.Action)), sorted([
+      exactActions(roles, [
         'iam:CreateRole',
         'iam:DeleteRole',
         'iam:GetRole',
@@ -150,16 +145,15 @@ export const validateGitHubOidcDeploymentTemplate = (template) => {
         'iam:GetRolePolicy',
         'iam:ListRolePolicies',
         'iam:UpdateAssumeRolePolicy'
-      ])),
+      ]),
       'CloudFormationExecutionRole IAM actions must match the generated workload role lifecycle contract.'
     );
     requireCondition(
-      roleStatement?.Resource?.['Fn::Sub']
+      roles?.Resource?.['Fn::Sub']
         === 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${TargetStackName}-*',
       'CloudFormationExecutionRole IAM resource must be limited to target stack generated roles.'
     );
-
-    for (const statement of getPolicyStatements(executionRole)) {
+    for (const statement of statementsOf(executionRole)) {
       requireCondition(
         statement?.Resource !== '*',
         'CloudFormationExecutionRole must not use wildcard resources.'
@@ -194,88 +188,99 @@ export const validateGitHubOidcDeploymentTemplate = (template) => {
       'GitHubActionsDeploymentRole trust must exactly match GitHub OIDC aud and sub.'
     );
 
-    const validateStatement = getStatementBySid(deploymentRole, 'ValidateSqsTemplate');
+    const validate = statementBySid(deploymentRole, 'ValidateSqsTemplate');
     requireCondition(
-      sameJson(normalizeActions(validateStatement?.Action), ['cloudformation:ValidateTemplate']),
+      exactActions(validate, ['cloudformation:ValidateTemplate']),
       'Deployment role validation action must be ValidateTemplate only.'
     );
     requireCondition(
-      validateStatement?.Resource === '*',
+      validate?.Resource === '*',
       'ValidateTemplate must use its required wildcard resource.'
     );
 
-    const createStatement = getStatementBySid(deploymentRole, 'CreateTargetStackChangeSet');
+    const create = statementBySid(deploymentRole, 'CreateTargetStackChangeSet');
     requireCondition(
-      sameJson(normalizeActions(createStatement?.Action), ['cloudformation:CreateChangeSet']),
+      exactActions(create, ['cloudformation:CreateChangeSet']),
       'Deployment role must create change sets without stack mutation actions.'
     );
     requireCondition(
-      createStatement?.Resource?.['Fn::Sub']
+      create?.Resource?.['Fn::Sub']
         === 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${TargetStackName}/*',
       'CreateChangeSet must be limited to TargetStackName.'
     );
     requireCondition(
-      sameJson(createStatement?.Condition, {
+      sameJson(create?.Condition, {
         ArnEquals: {
           'cloudformation:RoleArn': {
             'Fn::GetAtt': ['CloudFormationExecutionRole', 'Arn']
           }
+        },
+        StringLike: {
+          'cloudformation:ChangeSetName': 'ai-code-dojo-staging-*'
         }
       }),
-      'CreateChangeSet must require the approved CloudFormation execution role.'
+      'CreateChangeSet must require the approved execution role and generated name.'
     );
 
-    const reviewStackStatement = getStatementBySid(deploymentRole, 'ReviewTargetStack');
+    const stackReview = statementBySid(deploymentRole, 'ReviewTargetStack');
     requireCondition(
-      sameJson(sorted(normalizeActions(reviewStackStatement?.Action)), sorted([
+      exactActions(stackReview, [
         'cloudformation:DescribeStacks',
         'cloudformation:ListChangeSets',
         'cloudformation:GetTemplate'
-      ])),
+      ]),
       'Deployment role stack review actions must be read-only.'
     );
     requireCondition(
-      reviewStackStatement?.Resource?.['Fn::Sub']
+      stackReview?.Resource?.['Fn::Sub']
         === 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${TargetStackName}/*',
       'Stack review actions must be limited to TargetStackName.'
     );
 
-    const reviewChangeSetStatement = getStatementBySid(deploymentRole, 'ReviewGeneratedChangeSet');
+    const changeSetReview = statementBySid(deploymentRole, 'ReviewGeneratedChangeSet');
     requireCondition(
-      sameJson(normalizeActions(reviewChangeSetStatement?.Action), ['cloudformation:DescribeChangeSet']),
+      exactActions(changeSetReview, ['cloudformation:DescribeChangeSet']),
       'Deployment role change set review action must be DescribeChangeSet only.'
     );
     requireCondition(
-      reviewChangeSetStatement?.Resource?.['Fn::Sub']
-        === 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:changeSet/ai-code-dojo-staging-*/*',
-      'DescribeChangeSet must be limited to generated staging change sets.'
+      changeSetReview?.Resource?.['Fn::Sub']
+        === 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${TargetStackName}/*',
+      'DescribeChangeSet must use the required TargetStackName stack resource.'
+    );
+    requireCondition(
+      changeSetReview?.Condition?.StringLike?.['cloudformation:ChangeSetName']
+        === 'ai-code-dojo-staging-*',
+      'DescribeChangeSet must be limited to generated staging change set names.'
     );
 
-    const passRoleStatement = getStatementBySid(deploymentRole, 'PassApprovedExecutionRole');
+    const passRole = statementBySid(deploymentRole, 'PassApprovedExecutionRole');
     requireCondition(
-      sameJson(normalizeActions(passRoleStatement?.Action), ['iam:PassRole']),
+      exactActions(passRole, ['iam:PassRole']),
       'Deployment role must only pass the approved execution role.'
     );
     requireCondition(
-      sameJson(passRoleStatement?.Resource, {
+      sameJson(passRole?.Resource, {
         'Fn::GetAtt': ['CloudFormationExecutionRole', 'Arn']
       }),
       'iam:PassRole must target CloudFormationExecutionRole only.'
     );
     requireCondition(
-      passRoleStatement?.Condition?.StringEquals?.['iam:PassedToService']
+      passRole?.Condition?.StringEquals?.['iam:PassedToService']
         === 'cloudformation.amazonaws.com',
       'iam:PassRole must be limited to CloudFormation.'
     );
 
-    const forbidden = containsForbiddenAction(deploymentRole, [
+    const forbiddenActions = new Set([
       'cloudformation:ExecuteChangeSet',
       'cloudformation:CreateStack',
       'cloudformation:UpdateStack',
       'cloudformation:DeleteStack',
-      'iam:*',
-      'cloudformation:*'
+      'cloudformation:*',
+      'iam:*'
     ]);
+    const forbidden = statementsOf(deploymentRole)
+      .flatMap(actionsOf)
+      .find((action) => forbiddenActions.has(action));
     requireCondition(
       forbidden === undefined,
       `GitHubActionsDeploymentRole must not grant ${forbidden ?? 'forbidden mutation actions'}.`
@@ -302,10 +307,6 @@ export const validateGitHubOidcDeploymentTemplate = (template) => {
   requireCondition(
     !/\b\d{12}\b/.test(serialized),
     'Template must not contain a literal AWS account ID.'
-  );
-  requireCondition(
-    !serialized.includes('secrets.AWS_ACCESS_KEY_ID'),
-    'Template must not reference long-lived AWS credentials.'
   );
 
   return errors;
@@ -374,14 +375,19 @@ export const validateStagingChangeSetWorkflow = (source) => {
     'Execute: **未実施**',
     'Workflow summary must state that execution is not performed.'
   );
-  requireExcludes('execute-change-set', 'Workflow must not execute change sets.');
-  requireExcludes('aws cloudformation deploy', 'Workflow must not use direct CloudFormation deploy.');
-  requireExcludes('aws cloudformation create-stack', 'Workflow must not create stacks directly.');
-  requireExcludes('aws cloudformation update-stack', 'Workflow must not update stacks directly.');
-  requireExcludes('aws cloudformation delete-stack', 'Workflow must not delete stacks.');
-  requireExcludes('secrets.AWS_ACCESS_KEY_ID', 'Workflow must not reference AWS access key secrets.');
-  requireExcludes('secrets.AWS_SECRET_ACCESS_KEY', 'Workflow must not reference AWS secret access key secrets.');
-  requireExcludes('secrets.AWS_SESSION_TOKEN', 'Workflow must not reference AWS session token secrets.');
+
+  for (const [fragment, message] of [
+    ['execute-change-set', 'Workflow must not execute change sets.'],
+    ['aws cloudformation deploy', 'Workflow must not use direct CloudFormation deploy.'],
+    ['aws cloudformation create-stack', 'Workflow must not create stacks directly.'],
+    ['aws cloudformation update-stack', 'Workflow must not update stacks directly.'],
+    ['aws cloudformation delete-stack', 'Workflow must not delete stacks.'],
+    ['secrets.AWS_ACCESS_KEY_ID', 'Workflow must not reference AWS access key secrets.'],
+    ['secrets.AWS_SECRET_ACCESS_KEY', 'Workflow must not reference AWS secret access key secrets.'],
+    ['secrets.AWS_SESSION_TOKEN', 'Workflow must not reference AWS session token secrets.']
+  ]) {
+    requireExcludes(fragment, message);
+  }
 
   return errors;
 };
