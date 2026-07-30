@@ -59,8 +59,9 @@ export const validateGitHubOidcDeploymentTemplate = (template) => {
     'GitHubOidcSubject must not have a default.'
   );
   requireCondition(
-    parameters.GitHubOidcSubject?.AllowedPattern === '^repo:[^*?\\s]+:environment:staging$',
-    'GitHubOidcSubject must require an exact staging environment subject.'
+    parameters.GitHubOidcSubject?.AllowedPattern
+      === '^repo:(mizzz-ivr/ai-code-dojo|mizzz-ivr@[0-9]+/ai-code-dojo@[0-9]+):environment:staging$',
+    'GitHubOidcSubject must require the exact ai-code-dojo staging environment subject.'
   );
   requireCondition(
     !String(parameters.GitHubOidcSubject?.AllowedPattern ?? '').includes('.*'),
