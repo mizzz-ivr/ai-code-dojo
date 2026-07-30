@@ -35,6 +35,8 @@ jobs:
       DEPLOY_ROLE_ARN: ${{ vars.AWS_STAGING_DEPLOY_ROLE_ARN }}
       CFN_EXECUTION_ROLE_ARN: ${{ vars.AWS_STAGING_CFN_EXECUTION_ROLE_ARN }}
       STACK_NAME: ${{ vars.AWS_STAGING_SQS_STACK_NAME }}
+      INPUT_QUEUE_TYPE: ${{ inputs.queue_type }}
+      INPUT_MAX_RECEIVE_COUNT: ${{ inputs.max_receive_count }}
       TEMPLATE_PATH: infra/aws/cloudformation/sqs-queue-stack.json
       CHANGE_SET_NAME: ai-code-dojo-staging-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
@@ -60,7 +62,7 @@ jobs:
             echo "::error::AWS_STAGING_SQS_STACK_NAME has an invalid format."
             exit 1
           fi
-          if [[ ! "${{ inputs.max_receive_count }}" =~ ^[1-9][0-9]{0,2}$ ]]; then
+          if [[ ! "${INPUT_MAX_RECEIVE_COUNT}" =~ ^[1-9][0-9]{0,2}$ ]]; then
             echo "::error::max_receive_count must be an integer from 1 to 999."
             exit 1
           fi
@@ -106,8 +108,8 @@ jobs:
             --template-body "file://${TEMPLATE_PATH}" \
             --parameters \
               ParameterKey=EnvironmentName,ParameterValue=staging \
-              ParameterKey=QueueType,ParameterValue="${{ inputs.queue_type }}" \
-              ParameterKey=MaxReceiveCount,ParameterValue="${{ inputs.max_receive_count }}" \
+              ParameterKey=QueueType,ParameterValue="${INPUT_QUEUE_TYPE}" \
+              ParameterKey=MaxReceiveCount,ParameterValue="${INPUT_MAX_RECEIVE_COUNT}" \
               ParameterKey=WorkloadServicePrincipal,ParameterValue=ecs-tasks.amazonaws.com \
             --capabilities CAPABILITY_IAM \
             --role-arn "${CFN_EXECUTION_ROLE_ARN}" \
@@ -124,7 +126,8 @@ jobs:
           set -euo pipefail
           if aws cloudformation wait change-set-create-complete \
             --stack-name "${STACK_NAME}" \
-            --change-set-name "${CHANGE_SET_NAME}"; then
+            --change-set-name "${CHANGE_SET_NAME}" \
+            >/dev/null 2>&1; then
             echo "has_changes=true" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
@@ -161,8 +164,8 @@ jobs:
             echo
             echo "- Stack: \`${STACK_NAME}\`"
             echo "- Type: \`${{ steps.stack.outputs.type }}\`"
-            echo "- Queue type: \`${{ inputs.queue_type }}\`"
-            echo "- Max receive count: \`${{ inputs.max_receive_count }}\`"
+            echo "- Queue type: \`${INPUT_QUEUE_TYPE}\`"
+            echo "- Max receive count: \`${INPUT_MAX_RECEIVE_COUNT}\`"
             echo "- Change set: \`${CHANGE_SET_NAME}\`"
             echo "- Execute: **未実施**"
             echo
