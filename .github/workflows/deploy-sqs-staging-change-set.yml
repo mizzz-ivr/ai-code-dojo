@@ -1,0 +1,187 @@
+name: deploy-sqs-staging-change-set
+
+on:
+  workflow_dispatch:
+    inputs:
+      queue_type:
+        description: SQS queue type
+        required: true
+        default: standard
+        type: choice
+        options:
+          - standard
+          - fifo
+      max_receive_count:
+        description: DLQへ移動するまでの最大受信回数
+        required: true
+        default: "5"
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ai-code-dojo-staging-sqs-change-set
+  cancel-in-progress: false
+
+jobs:
+  create-change-set:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      AWS_REGION: ${{ vars.AWS_STAGING_REGION }}
+      DEPLOY_ROLE_ARN: ${{ vars.AWS_STAGING_DEPLOY_ROLE_ARN }}
+      CFN_EXECUTION_ROLE_ARN: ${{ vars.AWS_STAGING_CFN_EXECUTION_ROLE_ARN }}
+      STACK_NAME: ${{ vars.AWS_STAGING_SQS_STACK_NAME }}
+      TEMPLATE_PATH: infra/aws/cloudformation/sqs-queue-stack.json
+      CHANGE_SET_NAME: ai-code-dojo-staging-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate non-secret deployment variables
+        shell: bash
+        run: |
+          set -euo pipefail
+          required_values=(
+            "${AWS_REGION}"
+            "${DEPLOY_ROLE_ARN}"
+            "${CFN_EXECUTION_ROLE_ARN}"
+            "${STACK_NAME}"
+          )
+          for value in "${required_values[@]}"; do
+            if [[ -z "${value}" ]]; then
+              echo "::error::staging GitHub Environment variables are incomplete."
+              exit 1
+            fi
+          done
+          if [[ ! "${STACK_NAME}" =~ ^[a-z][a-z0-9-]{2,63}$ ]]; then
+            echo "::error::AWS_STAGING_SQS_STACK_NAME has an invalid format."
+            exit 1
+          fi
+          if [[ ! "${{ inputs.max_receive_count }}" =~ ^[1-9][0-9]{0,2}$ ]]; then
+            echo "::error::max_receive_count must be an integer from 1 to 999."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials with GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: ai-code-dojo-${{ github.run_id }}
+          mask-aws-account-id: true
+
+      - name: Validate CloudFormation template
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws cloudformation validate-template \
+            --template-body "file://${TEMPLATE_PATH}" \
+            >/dev/null
+
+      - name: Determine change set type
+        id: stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          if aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            >/dev/null 2>&1; then
+            echo "type=UPDATE" >> "${GITHUB_OUTPUT}"
+          else
+            echo "type=CREATE" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Create staging change set
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws cloudformation create-change-set \
+            --stack-name "${STACK_NAME}" \
+            --change-set-name "${CHANGE_SET_NAME}" \
+            --change-set-type "${{ steps.stack.outputs.type }}" \
+            --description "GitHub Actions review-only change set for run ${GITHUB_RUN_ID}" \
+            --template-body "file://${TEMPLATE_PATH}" \
+            --parameters \
+              ParameterKey=EnvironmentName,ParameterValue=staging \
+              ParameterKey=QueueType,ParameterValue="${{ inputs.queue_type }}" \
+              ParameterKey=MaxReceiveCount,ParameterValue="${{ inputs.max_receive_count }}" \
+              ParameterKey=WorkloadServicePrincipal,ParameterValue=ecs-tasks.amazonaws.com \
+            --capabilities CAPABILITY_IAM \
+            --role-arn "${CFN_EXECUTION_ROLE_ARN}" \
+            --tags \
+              Key=Application,Value=ai-code-dojo \
+              Key=Environment,Value=staging \
+              Key=ManagedBy,Value=cloudformation \
+            >/dev/null
+
+      - name: Wait for change set
+        id: wait
+        shell: bash
+        run: |
+          set -euo pipefail
+          if aws cloudformation wait change-set-create-complete \
+            --stack-name "${STACK_NAME}" \
+            --change-set-name "${CHANGE_SET_NAME}"; then
+            echo "has_changes=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          status="$(
+            aws cloudformation describe-change-set \
+              --stack-name "${STACK_NAME}" \
+              --change-set-name "${CHANGE_SET_NAME}" \
+              --query Status \
+              --output text
+          )"
+          reason="$(
+            aws cloudformation describe-change-set \
+              --stack-name "${STACK_NAME}" \
+              --change-set-name "${CHANGE_SET_NAME}" \
+              --query StatusReason \
+              --output text
+          )"
+
+          if [[ "${status}" == "FAILED" && "${reason}" == *"didn't contain changes"* ]]; then
+            echo "has_changes=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          echo "::error::change set creation failed. Review the CloudFormation console without copying sensitive identifiers to GitHub."
+          exit 1
+
+      - name: Write review summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "## staging SQS change set"
+            echo
+            echo "- Stack: \`${STACK_NAME}\`"
+            echo "- Type: \`${{ steps.stack.outputs.type }}\`"
+            echo "- Queue type: \`${{ inputs.queue_type }}\`"
+            echo "- Max receive count: \`${{ inputs.max_receive_count }}\`"
+            echo "- Change set: \`${CHANGE_SET_NAME}\`"
+            echo "- Execute: **未実施**"
+            echo
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          if [[ "${{ steps.wait.outputs.has_changes }}" != "true" ]]; then
+            echo "変更はありません。" >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          {
+            echo "| Action | Logical resource | Resource type | Replacement |"
+            echo "|---|---|---|---|"
+            aws cloudformation describe-change-set \
+              --stack-name "${STACK_NAME}" \
+              --change-set-name "${CHANGE_SET_NAME}" \
+              --query 'Changes[].ResourceChange.[Action,LogicalResourceId,ResourceType,Replacement]' \
+              --output text |
+              awk -F '\t' '{ printf "| %s | `%s` | `%s` | %s |\n", $1, $2, $3, $4 }'
+            echo
+            echo "> このworkflowはchange setを実行しません。AWS Consoleで差分・警告・IAM変更をレビューし、別の承認済み手順で判断してください。"
+          } >> "${GITHUB_STEP_SUMMARY}"
