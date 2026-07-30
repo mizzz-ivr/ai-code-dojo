@@ -9,8 +9,8 @@
     },
     "GitHubOidcSubject": {
       "Type": "String",
-      "AllowedPattern": "^repo:[^*?\\s]+:environment:staging$",
-      "ConstraintDescription": "Use the exact repository OIDC subject for the staging GitHub Environment. Wildcards are not allowed."
+      "AllowedPattern": "^repo:(mizzz-ivr/ai-code-dojo|mizzz-ivr@[0-9]+/ai-code-dojo@[0-9]+):environment:staging$",
+      "ConstraintDescription": "Use the exact legacy or immutable ai-code-dojo repository subject for the staging GitHub Environment."
     },
     "TargetStackName": {
       "Type": "String",
