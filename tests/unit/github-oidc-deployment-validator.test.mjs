@@ -39,7 +39,7 @@ test('validatorはOIDC subjectの既定値・wildcard・aud緩和を拒否する
 
   const errors = validateGitHubOidcDeploymentTemplate(template);
   assert.equal(includesError(errors, 'must not have a default'), true);
-  assert.equal(includesError(errors, 'exact staging environment subject'), true);
+  assert.equal(includesError(errors, 'exact ai-code-dojo staging environment subject'), true);
   assert.equal(includesError(errors, 'must not allow wildcard matching'), true);
   assert.equal(includesError(errors, 'must exactly match GitHub OIDC aud and sub'), true);
 });
