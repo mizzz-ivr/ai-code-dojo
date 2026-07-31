@@ -7,10 +7,7 @@ import {
 } from '@aws-sdk/client-sqs';
 import { createHttpQueueProducer } from '../../../../packages/queue/src/http-queue-producer.mjs';
 import { createNoopQueueEventLogger } from '../../../../packages/queue/src/queue-event-logger.mjs';
-import {
-  enqueueSubmissionAttempt,
-  setDefaultSubmissionQueueProducerFactory
-} from '../../../../packages/queue/src/submission-queue.mjs';
+import { enqueueSubmissionAttempt } from '../../../../packages/queue/src/submission-queue.mjs';
 import {
   createSqsQueueProducer,
   SQS_QUEUE_TYPES
@@ -53,17 +50,12 @@ export const createWorkerQueueConsumerRuntime = ({
   }
 
   if (config.transport === WORKER_QUEUE_CONSUMERS.HTTP) {
-    const createProducer = ({ eventLogger: producerLogger, source }) =>
-      createHttpQueueProducer({
-        baseUrl: retryEnqueueBaseUrl,
-        fetchImpl: httpFetchImpl,
-        eventLogger: producerLogger,
-        source
-      });
-    const restoreDefaultProducer = setDefaultSubmissionQueueProducerFactory(
-      createProducer,
-      { transport: config.transport }
-    );
+    const queueProducer = createHttpQueueProducer({
+      baseUrl: retryEnqueueBaseUrl,
+      fetchImpl: httpFetchImpl,
+      eventLogger,
+      source: 'application_retry'
+    });
     let closed = false;
 
     return Object.freeze({
@@ -72,12 +64,12 @@ export const createWorkerQueueConsumerRuntime = ({
       enqueue: (params = {}) => enqueueSubmissionAttempt({
         ...params,
         transport: config.transport,
-        eventLogger: params.eventLogger ?? eventLogger
+        eventLogger: params.eventLogger ?? eventLogger,
+        queueProducer
       }),
       close: async () => {
         if (closed) return false;
         closed = true;
-        restoreDefaultProducer();
         return true;
       }
     });
@@ -117,27 +109,20 @@ export const createWorkerQueueConsumerRuntime = ({
     clearIntervalFn,
     ...(sleepFn ? { sleepFn } : {})
   });
-
-  const createProducer = ({ eventLogger: producerLogger, source }) =>
-    createSqsQueueProducer({
-      client,
-      commandFactory: sendCommandFactory,
-      queueUrl: config.sqs.queueUrl,
-      queueType: config.sqs.queueType,
-      source,
-      eventLogger: producerLogger
-    });
-  const restoreDefaultProducer = setDefaultSubmissionQueueProducerFactory(
-    createProducer,
-    { transport: config.transport }
-  );
+  const queueProducer = createSqsQueueProducer({
+    client,
+    commandFactory: sendCommandFactory,
+    queueUrl: config.sqs.queueUrl,
+    queueType: config.sqs.queueType,
+    source: 'application_retry',
+    eventLogger
+  });
 
   let closed = false;
   const close = async () => {
     if (closed) return false;
     closed = true;
 
-    restoreDefaultProducer();
     const stopPromise = consumer.stop();
     try {
       client.destroy?.();
@@ -154,7 +139,8 @@ export const createWorkerQueueConsumerRuntime = ({
     enqueue: (params = {}) => enqueueSubmissionAttempt({
       ...params,
       transport: config.transport,
-      eventLogger: params.eventLogger ?? eventLogger
+      eventLogger: params.eventLogger ?? eventLogger,
+      queueProducer
     }),
     close
   });
