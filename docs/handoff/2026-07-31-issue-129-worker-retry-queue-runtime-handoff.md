@@ -16,6 +16,10 @@
 
 Worker-originのapplication retry / stale recoveryを、選択中のHTTP / SQS runtimeへ統合した。
 
+- Worker runtime: Transport共通`enqueue()` port
+- Application retry: Serverからruntime `enqueue()`を直接利用
+- Stale recovery: Scannerへruntime `enqueue()`を`enqueueAttempt`として明示注入
+- Process-global producer registration: 不使用
 - HTTP: 既存`POST /jobs` self-enqueue
 - SQS: Consumerと同一client / QueueUrlへのSendMessage
 - Standard / FIFO: QueueUrl suffixで判定
@@ -24,13 +28,16 @@ Worker-originのapplication retry / stale recoveryを、選択中のHTTP / SQS r
 
 ## 主要ファイル
 
-- `packages/queue/src/submission-queue.mjs`
+- `apps/worker/src/server.mjs`
 - `apps/worker/src/config/queue-consumer-config.mjs`
 - `apps/worker/src/services/queue-consumer-runtime.mjs`
+- `apps/worker/src/services/stale-recovery-scanner.mjs`
+- `packages/queue/src/submission-queue.mjs`
 - `infra/aws/cloudformation/sqs-queue-stack.json`
 - `scripts/lib/sqs-cloudformation-validator.mjs`
 - `tests/unit/queue-consumer-config.test.mjs`
 - `tests/unit/queue-consumer-runtime.test.mjs`
+- `tests/unit/stale-recovery-scanner.test.mjs`
 - `tests/unit/sqs-cloudformation-validator.test.mjs`
 
 ## 維持した不変条件
@@ -41,6 +48,7 @@ Worker-originのapplication retry / stale recoveryを、選択中のHTTP / SQS r
 - Processing lease / attempt fencing / completion guardを変更しない
 - Invalid / unconfirmed deliveryをackしない
 - Hidden tests / code / credentialsをqueue messageへ含めない
+- Enqueue失敗を成功扱いにしない
 
 ## ECS wiring保留理由
 
@@ -51,9 +59,11 @@ Worker-originのapplication retry / stale recoveryを、選択中のHTTP / SQS r
 
 ## Reviewで確認する点
 
-- Process-local default producer registrationのrestore
+- Runtime `enqueue()`の依存注入境界
+- Process-global mutable stateが残っていないこと
+- Application retry / stale recoveryが同一runtimeを利用すること
 - Consumer / producerのSQS client共有
-- Runtime close順序
+- Runtime close順序とsingle destroy
 - HTTP rollback互換
 - FIFO dedup
 - Worker IAM action完全一致
@@ -66,4 +76,4 @@ Worker-originのapplication retry / stale recoveryを、選択中のHTTP / SQS r
 2. Branch `feat/worker-retry-queue-runtime`を削除する。
 3. 実AWSへは自動反映しない。
 4. Staging transport切替は別承認で実施する。
-5. 次候補はDLQ replay / purge、metrics、outbox claim / lease、DB移行方針から再評価する。
+5. 次候補はManaged DB /実行トポロジー設計、DLQ replay / purge、metrics、outbox claim / leaseから再評価する。
