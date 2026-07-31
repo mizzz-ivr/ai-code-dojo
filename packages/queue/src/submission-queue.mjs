@@ -4,29 +4,36 @@ import { createQueueEventLogger, QUEUE_EVENTS } from './queue-event-logger.mjs';
 
 const getDefaultWorkerUrl = () => process.env.RUNNER_API_BASE_URL ?? 'http://localhost:8081';
 
-let defaultQueueProducerFactory = null;
+let defaultQueueProducerRegistration = null;
 
-export const setDefaultSubmissionQueueProducerFactory = (factory) => {
+export const setDefaultSubmissionQueueProducerFactory = (
+  factory,
+  { transport = 'http' } = {}
+) => {
   if (factory !== null && typeof factory !== 'function') {
     throw new TypeError('default queue producer factory must be a function or null.');
   }
+  if (typeof transport !== 'string' || transport.length === 0) {
+    throw new TypeError('default queue producer transport is required.');
+  }
 
-  const previousFactory = defaultQueueProducerFactory;
-  defaultQueueProducerFactory = factory;
+  const previousRegistration = defaultQueueProducerRegistration;
+  const registration = factory === null ? null : Object.freeze({ factory, transport });
+  defaultQueueProducerRegistration = registration;
   let active = true;
 
   return () => {
     if (!active) return false;
     active = false;
-    if (defaultQueueProducerFactory !== factory) return false;
-    defaultQueueProducerFactory = previousFactory;
+    if (defaultQueueProducerRegistration !== registration) return false;
+    defaultQueueProducerRegistration = previousRegistration;
     return true;
   };
 };
 
 const createDefaultQueueProducer = ({ runnerApiBaseUrl, eventLogger, source }) => {
-  if (defaultQueueProducerFactory) {
-    const producer = defaultQueueProducerFactory({ eventLogger, source });
+  if (defaultQueueProducerRegistration) {
+    const producer = defaultQueueProducerRegistration.factory({ eventLogger, source });
     if (!producer || typeof producer.enqueue !== 'function') {
       throw new TypeError('default queue producer factory must return a producer with enqueue().');
     }
@@ -51,6 +58,10 @@ export const enqueueSubmissionAttempt = async ({
   source = 'submission',
   transport = 'http'
 }) => {
+  const effectiveTransport = queueProducer
+    ? transport
+    : defaultQueueProducerRegistration?.transport ?? transport;
+
   let message;
   try {
     message = buildSubmissionQueueMessage({
@@ -61,7 +72,7 @@ export const enqueueSubmissionAttempt = async ({
     });
   } catch (error) {
     eventLogger.warn(QUEUE_EVENTS.ENQUEUE_FAILED, {
-      transport,
+      transport: effectiveTransport,
       source,
       submissionId,
       gradingAttempt,
@@ -82,7 +93,7 @@ export const enqueueSubmissionAttempt = async ({
     });
   } catch (error) {
     eventLogger.warn(QUEUE_EVENTS.ENQUEUE_FAILED, {
-      transport,
+      transport: effectiveTransport,
       source,
       submissionId,
       gradingAttempt,
