@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createWorkerQueueConsumerRuntime } from '../../apps/worker/src/services/queue-consumer-runtime.mjs';
-import { enqueueSubmissionAttempt } from '../../packages/queue/src/submission-queue.mjs';
 
 const sqsConfig = {
   transport: 'sqs',
@@ -56,7 +55,7 @@ test('HTTP runtimeはAWS clientを生成せずapplication retryをself-enqueue�
 
   assert.equal(runtime.transport, 'http');
   assert.equal(runtime.start(), false);
-  assert.equal(await enqueueSubmissionAttempt(retryMessage), true);
+  assert.equal(await runtime.enqueue(retryMessage), true);
   assert.equal(requests.length, 1);
   assert.equal(requests[0].url, 'http://worker.internal:8081/jobs');
   assert.equal(JSON.parse(requests[0].options.body).gradingAttempt, 2);
@@ -99,7 +98,7 @@ test('SQS runtimeはconsumerとretry producerでclientを一度だけ生成し�
   });
 
   assert.equal(runtime.transport, 'sqs');
-  assert.equal(await enqueueSubmissionAttempt(retryMessage), true);
+  assert.equal(await runtime.enqueue(retryMessage), true);
   const sendCommand = sentCommands.find((command) => command.type === 'send');
   assert.equal(sendCommand.input.QueueUrl, sqsConfig.sqs.queueUrl);
   assert.equal(JSON.parse(sendCommand.input.MessageBody).gradingAttempt, 2);
