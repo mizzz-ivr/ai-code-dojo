@@ -7,7 +7,7 @@ const silentLogger = {
   error: () => {}
 };
 
-test('stale recovery scannerは回収成功・上限到達・再投入失敗を集計する', async () => {
+test('stale recovery scannerは注入したruntime enqueueで回収成功・上限到達・再投入失敗を集計する', async () => {
   const candidates = [
     { id: 'requeue', gradingAttempt: 1, attemptIdempotencyKey: 'requeue:attempt:1', processingLeaseExpiresAt: '2026-07-23T00:00:00.000Z' },
     { id: 'terminal', gradingAttempt: 2, attemptIdempotencyKey: 'terminal:attempt:2', processingLeaseExpiresAt: '2026-07-23T00:00:00.000Z' },
@@ -15,11 +15,16 @@ test('stale recovery scannerは回収成功・上限到達・再投入失敗を�
     { id: 'no-op', gradingAttempt: 1, attemptIdempotencyKey: 'no-op:attempt:1', processingLeaseExpiresAt: '2026-07-23T00:00:00.000Z' }
   ];
   const finalized = [];
+  const enqueueCalls = [];
 
   const summary = await runStaleRecoveryScan({
     config: { enabled: true, intervalMs: 1000, batchSize: 10, concurrency: 2 },
     maxInfraRetryAttempts: 2,
     retryEnqueueBaseUrl: 'http://worker.example',
+    enqueueAttempt: async (params) => {
+      enqueueCalls.push(params);
+      return params.submissionId !== 'enqueue-fail';
+    },
     timestamp: '2026-07-23T00:00:01.000Z',
     logger: silentLogger,
     dependencies: {
@@ -39,7 +44,9 @@ test('stale recovery scannerは回収成功・上限到達・再投入失敗を�
           submission: { id, status: 'queued', gradingAttempt: 2, attemptIdempotencyKey: `${id}:attempt:2` }
         };
       },
-      enqueueSubmissionAttempt: async ({ submissionId }) => submissionId !== 'enqueue-fail',
+      enqueueSubmissionAttempt: async () => {
+        throw new Error('default enqueue must not be used when runtime enqueue is injected');
+      },
       finalizeQueuedAttemptAsInfraFailed: async (id) => {
         finalized.push(id);
         return { id, status: 'infra_failed' };
@@ -55,5 +62,9 @@ test('stale recovery scannerは回収成功・上限到達・再投入失敗を�
     noOp: 1,
     errors: 0
   });
+  assert.deepEqual(enqueueCalls.map(({ submissionId, source }) => ({ submissionId, source })), [
+    { submissionId: 'requeue', source: 'stale_recovery' },
+    { submissionId: 'enqueue-fail', source: 'stale_recovery' }
+  ]);
   assert.deepEqual(finalized, ['enqueue-fail']);
 });

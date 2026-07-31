@@ -4,6 +4,7 @@ import {
   loadWorkerQueueConsumerConfig,
   WORKER_QUEUE_CONSUMERS
 } from '../../apps/worker/src/config/queue-consumer-config.mjs';
+import { SQS_QUEUE_TYPES } from '../../packages/queue/src/sqs-queue-producer.mjs';
 
 const validSqsEnv = {
   WORKER_QUEUE_CONSUMER: 'sqs',
@@ -23,18 +24,30 @@ test('Worker queue consumerは既定でHTTPを選択しSQS設定を参照しな�
   });
 });
 
-test('Worker queue consumerはSQS設定を読み込む', () => {
+test('Worker queue consumerはStandard SQS設定を読み込む', () => {
   assert.deepEqual(loadWorkerQueueConsumerConfig(validSqsEnv), {
     transport: WORKER_QUEUE_CONSUMERS.SQS,
     sqs: {
       region: 'ap-northeast-1',
       queueUrl: validSqsEnv.WORKER_SQS_QUEUE_URL,
+      queueType: SQS_QUEUE_TYPES.STANDARD,
       waitTimeSeconds: 20,
       visibilityTimeoutSeconds: 90,
       visibilityHeartbeatSeconds: 30,
       pollErrorDelayMs: 1000
     }
   });
+});
+
+test('Worker queue consumerはQueueUrl suffixからFIFOを判定する', () => {
+  const queueUrl = `${validSqsEnv.WORKER_SQS_QUEUE_URL}.fifo`;
+  const config = loadWorkerQueueConsumerConfig({
+    ...validSqsEnv,
+    WORKER_SQS_QUEUE_URL: queueUrl
+  });
+
+  assert.equal(config.sqs.queueUrl, queueUrl);
+  assert.equal(config.sqs.queueType, SQS_QUEUE_TYPES.FIFO);
 });
 
 test('Worker SQS consumerは必須設定欠落を拒否する', () => {

@@ -1,3 +1,5 @@
+import { SQS_QUEUE_TYPES } from '../../../../packages/queue/src/sqs-queue-producer.mjs';
+
 export const WORKER_QUEUE_CONSUMERS = Object.freeze({
   HTTP: 'http',
   SQS: 'sqs'
@@ -63,11 +65,18 @@ const parseQueueUrl = (value) => {
   if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.search || parsed.hash) {
     throw new TypeError('WORKER_SQS_QUEUE_URL must be an absolute HTTPS URL without credentials, query, or fragment.');
   }
-  if (!parsed.pathname.split('/').filter(Boolean).at(-1)) {
+
+  const queueName = parsed.pathname.split('/').filter(Boolean).at(-1);
+  if (!queueName) {
     throw new TypeError('WORKER_SQS_QUEUE_URL must include a queue name.');
   }
 
-  return value.trim();
+  return Object.freeze({
+    queueUrl: value.trim(),
+    queueType: queueName.endsWith('.fifo')
+      ? SQS_QUEUE_TYPES.FIFO
+      : SQS_QUEUE_TYPES.STANDARD
+  });
 };
 
 export const loadWorkerQueueConsumerConfig = (env = process.env) => {
@@ -104,11 +113,14 @@ export const loadWorkerQueueConsumerConfig = (env = process.env) => {
     );
   }
 
+  const queue = parseQueueUrl(env.WORKER_SQS_QUEUE_URL);
+
   return Object.freeze({
     transport,
     sqs: Object.freeze({
       region: parseRegion(env.WORKER_SQS_REGION),
-      queueUrl: parseQueueUrl(env.WORKER_SQS_QUEUE_URL),
+      queueUrl: queue.queueUrl,
+      queueType: queue.queueType,
       waitTimeSeconds,
       visibilityTimeoutSeconds,
       visibilityHeartbeatSeconds,

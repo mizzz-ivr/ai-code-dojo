@@ -11,10 +11,7 @@
     "QueueType": {
       "Type": "String",
       "Default": "standard",
-      "AllowedValues": [
-        "standard",
-        "fifo"
-      ]
+      "AllowedValues": ["standard", "fifo"]
     },
     "MaxReceiveCount": {
       "Type": "Number",
@@ -31,12 +28,7 @@
   },
   "Conditions": {
     "IsFifo": {
-      "Fn::Equals": [
-        {
-          "Ref": "QueueType"
-        },
-        "fifo"
-      ]
+      "Fn::Equals": [{"Ref": "QueueType"}, "fifo"]
     }
   },
   "Resources": {
@@ -48,21 +40,11 @@
         "QueueName": {
           "Fn::If": [
             "IsFifo",
-            {
-              "Fn::Sub": "ai-code-dojo-${EnvironmentName}-grading-dlq.fifo"
-            },
-            {
-              "Fn::Sub": "ai-code-dojo-${EnvironmentName}-grading-dlq"
-            }
+            {"Fn::Sub": "ai-code-dojo-${EnvironmentName}-grading-dlq.fifo"},
+            {"Fn::Sub": "ai-code-dojo-${EnvironmentName}-grading-dlq"}
           ]
         },
-        "FifoQueue": {
-          "Fn::If": [
-            "IsFifo",
-            true,
-            false
-          ]
-        },
+        "FifoQueue": {"Fn::If": ["IsFifo", true, false]},
         "SqsManagedSseEnabled": true,
         "MessageRetentionPeriod": 1209600,
         "ReceiveMessageWaitTimeSeconds": 20,
@@ -77,12 +59,8 @@
                   "SourceQueueName": {
                     "Fn::If": [
                       "IsFifo",
-                      {
-                        "Fn::Sub": "ai-code-dojo-${EnvironmentName}-grading.fifo"
-                      },
-                      {
-                        "Fn::Sub": "ai-code-dojo-${EnvironmentName}-grading"
-                      }
+                      {"Fn::Sub": "ai-code-dojo-${EnvironmentName}-grading.fifo"},
+                      {"Fn::Sub": "ai-code-dojo-${EnvironmentName}-grading"}
                     ]
                   }
                 }
@@ -91,20 +69,9 @@
           ]
         },
         "Tags": [
-          {
-            "Key": "Application",
-            "Value": "ai-code-dojo"
-          },
-          {
-            "Key": "Environment",
-            "Value": {
-              "Ref": "EnvironmentName"
-            }
-          },
-          {
-            "Key": "QueuePurpose",
-            "Value": "grading-dead-letter"
-          }
+          {"Key": "Application", "Value": "ai-code-dojo"},
+          {"Key": "Environment", "Value": {"Ref": "EnvironmentName"}},
+          {"Key": "QueuePurpose", "Value": "grading-dead-letter"}
         ]
       }
     },
@@ -116,65 +83,30 @@
         "QueueName": {
           "Fn::If": [
             "IsFifo",
-            {
-              "Fn::Sub": "ai-code-dojo-${EnvironmentName}-grading.fifo"
-            },
-            {
-              "Fn::Sub": "ai-code-dojo-${EnvironmentName}-grading"
-            }
+            {"Fn::Sub": "ai-code-dojo-${EnvironmentName}-grading.fifo"},
+            {"Fn::Sub": "ai-code-dojo-${EnvironmentName}-grading"}
           ]
         },
-        "FifoQueue": {
-          "Fn::If": [
-            "IsFifo",
-            true,
-            false
-          ]
-        },
+        "FifoQueue": {"Fn::If": ["IsFifo", true, false]},
         "SqsManagedSseEnabled": true,
         "MessageRetentionPeriod": 345600,
         "ReceiveMessageWaitTimeSeconds": 20,
         "VisibilityTimeout": 90,
         "RedrivePolicy": {
-          "deadLetterTargetArn": {
-            "Fn::GetAtt": [
-              "DeadLetterQueue",
-              "Arn"
-            ]
-          },
-          "maxReceiveCount": {
-            "Ref": "MaxReceiveCount"
-          }
+          "deadLetterTargetArn": {"Fn::GetAtt": ["DeadLetterQueue", "Arn"]},
+          "maxReceiveCount": {"Ref": "MaxReceiveCount"}
         },
         "Tags": [
-          {
-            "Key": "Application",
-            "Value": "ai-code-dojo"
-          },
-          {
-            "Key": "Environment",
-            "Value": {
-              "Ref": "EnvironmentName"
-            }
-          },
-          {
-            "Key": "QueuePurpose",
-            "Value": "grading-source"
-          }
+          {"Key": "Application", "Value": "ai-code-dojo"},
+          {"Key": "Environment", "Value": {"Ref": "EnvironmentName"}},
+          {"Key": "QueuePurpose", "Value": "grading-source"}
         ]
       }
     },
     "QueueTlsPolicy": {
       "Type": "AWS::SQS::QueuePolicy",
       "Properties": {
-        "Queues": [
-          {
-            "Ref": "SourceQueue"
-          },
-          {
-            "Ref": "DeadLetterQueue"
-          }
-        ],
+        "Queues": [{"Ref": "SourceQueue"}, {"Ref": "DeadLetterQueue"}],
         "PolicyDocument": {
           "Version": "2012-10-17",
           "Statement": [
@@ -184,24 +116,10 @@
               "Principal": "*",
               "Action": "sqs:*",
               "Resource": [
-                {
-                  "Fn::GetAtt": [
-                    "SourceQueue",
-                    "Arn"
-                  ]
-                },
-                {
-                  "Fn::GetAtt": [
-                    "DeadLetterQueue",
-                    "Arn"
-                  ]
-                }
+                {"Fn::GetAtt": ["SourceQueue", "Arn"]},
+                {"Fn::GetAtt": ["DeadLetterQueue", "Arn"]}
               ],
-              "Condition": {
-                "Bool": {
-                  "aws:SecureTransport": "false"
-                }
-              }
+              "Condition": {"Bool": {"aws:SecureTransport": "false"}}
             }
           ]
         }
@@ -216,11 +134,7 @@
           "Statement": [
             {
               "Effect": "Allow",
-              "Principal": {
-                "Service": {
-                  "Ref": "WorkloadServicePrincipal"
-                }
-              },
+              "Principal": {"Service": {"Ref": "WorkloadServicePrincipal"}},
               "Action": "sts:AssumeRole"
             }
           ]
@@ -233,59 +147,37 @@
               "Statement": [
                 {
                   "Effect": "Allow",
-                  "Action": [
-                    "sqs:SendMessage"
-                  ],
-                  "Resource": {
-                    "Fn::GetAtt": [
-                      "SourceQueue",
-                      "Arn"
-                    ]
-                  }
+                  "Action": ["sqs:SendMessage"],
+                  "Resource": {"Fn::GetAtt": ["SourceQueue", "Arn"]}
                 }
               ]
             }
           }
         ],
         "Tags": [
-          {
-            "Key": "Application",
-            "Value": "ai-code-dojo"
-          },
-          {
-            "Key": "Environment",
-            "Value": {
-              "Ref": "EnvironmentName"
-            }
-          },
-          {
-            "Key": "RolePurpose",
-            "Value": "grading-queue-producer"
-          }
+          {"Key": "Application", "Value": "ai-code-dojo"},
+          {"Key": "Environment", "Value": {"Ref": "EnvironmentName"}},
+          {"Key": "RolePurpose", "Value": "grading-queue-producer"}
         ]
       }
     },
     "ConsumerRole": {
       "Type": "AWS::IAM::Role",
       "Properties": {
-        "Description": "ai-code-dojo Worker queue consumer role",
+        "Description": "ai-code-dojo Worker queue consumer and retry producer role",
         "AssumeRolePolicyDocument": {
           "Version": "2012-10-17",
           "Statement": [
             {
               "Effect": "Allow",
-              "Principal": {
-                "Service": {
-                  "Ref": "WorkloadServicePrincipal"
-                }
-              },
+              "Principal": {"Service": {"Ref": "WorkloadServicePrincipal"}},
               "Action": "sts:AssumeRole"
             }
           ]
         },
         "Policies": [
           {
-            "PolicyName": "ConsumeFromGradingSourceQueue",
+            "PolicyName": "ConsumeAndRetryGradingSourceQueue",
             "PolicyDocument": {
               "Version": "2012-10-17",
               "Statement": [
@@ -294,34 +186,19 @@
                   "Action": [
                     "sqs:ReceiveMessage",
                     "sqs:DeleteMessage",
-                    "sqs:ChangeMessageVisibility"
+                    "sqs:ChangeMessageVisibility",
+                    "sqs:SendMessage"
                   ],
-                  "Resource": {
-                    "Fn::GetAtt": [
-                      "SourceQueue",
-                      "Arn"
-                    ]
-                  }
+                  "Resource": {"Fn::GetAtt": ["SourceQueue", "Arn"]}
                 }
               ]
             }
           }
         ],
         "Tags": [
-          {
-            "Key": "Application",
-            "Value": "ai-code-dojo"
-          },
-          {
-            "Key": "Environment",
-            "Value": {
-              "Ref": "EnvironmentName"
-            }
-          },
-          {
-            "Key": "RolePurpose",
-            "Value": "grading-queue-consumer"
-          }
+          {"Key": "Application", "Value": "ai-code-dojo"},
+          {"Key": "Environment", "Value": {"Ref": "EnvironmentName"}},
+          {"Key": "RolePurpose", "Value": "grading-queue-worker"}
         ]
       }
     }
@@ -329,47 +206,13 @@
   "Outputs": {
     "SourceQueueUrl": {
       "Description": "Set as API_SQS_QUEUE_URL and WORKER_SQS_QUEUE_URL.",
-      "Value": {
-        "Ref": "SourceQueue"
-      }
+      "Value": {"Ref": "SourceQueue"}
     },
-    "SourceQueueArn": {
-      "Value": {
-        "Fn::GetAtt": [
-          "SourceQueue",
-          "Arn"
-        ]
-      }
-    },
-    "DeadLetterQueueUrl": {
-      "Value": {
-        "Ref": "DeadLetterQueue"
-      }
-    },
-    "DeadLetterQueueArn": {
-      "Value": {
-        "Fn::GetAtt": [
-          "DeadLetterQueue",
-          "Arn"
-        ]
-      }
-    },
-    "ProducerRoleArn": {
-      "Value": {
-        "Fn::GetAtt": [
-          "ProducerRole",
-          "Arn"
-        ]
-      }
-    },
-    "ConsumerRoleArn": {
-      "Value": {
-        "Fn::GetAtt": [
-          "ConsumerRole",
-          "Arn"
-        ]
-      }
-    },
+    "SourceQueueArn": {"Value": {"Fn::GetAtt": ["SourceQueue", "Arn"]}},
+    "DeadLetterQueueUrl": {"Value": {"Ref": "DeadLetterQueue"}},
+    "DeadLetterQueueArn": {"Value": {"Fn::GetAtt": ["DeadLetterQueue", "Arn"]}},
+    "ProducerRoleArn": {"Value": {"Fn::GetAtt": ["ProducerRole", "Arn"]}},
+    "ConsumerRoleArn": {"Value": {"Fn::GetAtt": ["ConsumerRole", "Arn"]}},
     "ApiRuntimeConfiguration": {
       "Description": "Non-secret API environment configuration example.",
       "Value": {
@@ -378,31 +221,9 @@
           [
             "API_QUEUE_TRANSPORT=sqs",
             "API_QUEUE_OUTBOX_ENABLED=1",
-            {
-              "Fn::Sub": "API_SQS_REGION=${AWS::Region}"
-            },
-            {
-              "Fn::Join": [
-                "",
-                [
-                  "API_SQS_QUEUE_URL=",
-                  {
-                    "Ref": "SourceQueue"
-                  }
-                ]
-              ]
-            },
-            {
-              "Fn::Join": [
-                "",
-                [
-                  "API_SQS_QUEUE_TYPE=",
-                  {
-                    "Ref": "QueueType"
-                  }
-                ]
-              ]
-            }
+            {"Fn::Sub": "API_SQS_REGION=${AWS::Region}"},
+            {"Fn::Join": ["", ["API_SQS_QUEUE_URL=", {"Ref": "SourceQueue"}]]},
+            {"Fn::Join": ["", ["API_SQS_QUEUE_TYPE=", {"Ref": "QueueType"}]]}
           ]
         ]
       }
@@ -414,20 +235,8 @@
           "\n",
           [
             "WORKER_QUEUE_CONSUMER=sqs",
-            {
-              "Fn::Sub": "WORKER_SQS_REGION=${AWS::Region}"
-            },
-            {
-              "Fn::Join": [
-                "",
-                [
-                  "WORKER_SQS_QUEUE_URL=",
-                  {
-                    "Ref": "SourceQueue"
-                  }
-                ]
-              ]
-            },
+            {"Fn::Sub": "WORKER_SQS_REGION=${AWS::Region}"},
+            {"Fn::Join": ["", ["WORKER_SQS_QUEUE_URL=", {"Ref": "SourceQueue"}]]},
             "WORKER_SQS_WAIT_TIME_SECONDS=20",
             "WORKER_SQS_VISIBILITY_TIMEOUT_SECONDS=90",
             "WORKER_SQS_VISIBILITY_HEARTBEAT_SECONDS=30"

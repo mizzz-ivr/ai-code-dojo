@@ -54,12 +54,18 @@ export const runStaleRecoveryScan = async ({
   config,
   maxInfraRetryAttempts,
   retryEnqueueBaseUrl,
+  enqueueAttempt,
   timestamp = new Date().toISOString(),
   logger = console,
   eventLogger,
   dependencies = defaultDependencies
 }) => {
   const observability = createCompatibleEventLogger(eventLogger, logger);
+  const enqueue = enqueueAttempt ?? dependencies.enqueueSubmissionAttempt;
+  if (typeof enqueue !== 'function') {
+    throw new TypeError('stale recovery enqueueAttempt is required.');
+  }
+
   const candidates = await dependencies.listStaleRunningSubmissions({
     timestamp,
     limit: config.batchSize
@@ -101,7 +107,7 @@ export const runStaleRecoveryScan = async ({
         return;
       }
 
-      const enqueued = await dependencies.enqueueSubmissionAttempt({
+      const enqueued = await enqueue({
         submissionId: recovered.submission.id,
         gradingAttempt: recovered.submission.gradingAttempt,
         attemptIdempotencyKey: recovered.submission.attemptIdempotencyKey,
@@ -163,6 +169,7 @@ export const startStaleRecoveryScanner = ({
   config,
   maxInfraRetryAttempts,
   retryEnqueueBaseUrl,
+  enqueueAttempt,
   logger = console,
   eventLogger,
   dependencies = defaultDependencies
@@ -187,6 +194,7 @@ export const startStaleRecoveryScanner = ({
         config,
         maxInfraRetryAttempts,
         retryEnqueueBaseUrl,
+        enqueueAttempt,
         eventLogger: observability,
         dependencies
       });

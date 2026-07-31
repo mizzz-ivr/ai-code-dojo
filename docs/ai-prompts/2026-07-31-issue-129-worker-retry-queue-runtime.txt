@@ -1,0 +1,77 @@
+# Issue #129 Worker retry queue runtime 実装prompt
+
+あなたは `mizzz-ivr/ai-code-dojo` のシニアPM・テックリード・ソフトウェアアーキテクト・レビュアーです。
+
+## 最優先ルール
+
+1. `docs/ai-protocol/PROMPT.txt`を読む。
+2. README / project-overview / current-status / active-issues / system-overviewを正本とする。
+3. APIで提出コードを直接実行しない。
+4. Hidden testsをlearnerへ返さない。
+5. Challengeはversion追加方式とする。
+6. Issue #129以外の機能変更を混在させない。
+7. PR、commit、Issue、docsは日本語とする。
+8. Branch名へ`codex`を含めない。
+
+## Current state
+
+- Issue: #129
+- PR: #130
+- Branch: `feat/worker-retry-queue-runtime`
+- Production transport: HTTP
+- Worker application retry / stale recovery: 選択中runtimeへ統合対象
+
+## 目的
+
+Workerが生成するapplication retryとstale recoveryを、`WORKER_QUEUE_CONSUMER=http|sqs`で選択中のqueue runtimeへ再投入する。
+
+## 必須境界
+
+- HTTPは既定値・rollback先として維持する。
+- HTTP選択時はAWS clientを生成しない。
+- SQS選択時はconsumer / retry producerで同一clientを共有する。
+- Standard / FIFOをQueueUrlから判定する。
+- FIFO group / dedup契約は既存SQS producerを再利用する。
+- Worker runtimeはtransport共通`enqueue()` portを提供する。
+- Application retryはruntime `enqueue()`を直接利用する。
+- Stale scannerへruntime `enqueue()`を明示注入する。
+- Process-global registrationや共有可変singletonを使用しない。
+- Worker roleはsource queueへのReceive / Delete / ChangeVisibility / Sendだけとする。
+- API producer roleはSendだけを維持する。
+- DLQ read / purge / queue管理 / wildcard resourceを追加しない。
+- QueueUrl / credentials / ReceiptHandle / raw attempt key / raw errorをログへ出さない。
+- Processing lease / attempt fencing / completion guardを変更しない。
+
+## 非対象
+
+- ECS task definition / service / cluster
+- SQLiteからmanaged DBへの移行
+- 実AWS deploy / transport切替
+- Durable retry scheduling
+- DLQ replay / purge
+- Metrics / dashboard / alert
+- Runner / hidden tests / auth / UI
+
+## レビュー観点
+
+- Runtime enqueueの依存注入境界が明確か。
+- Application retryとstale recoveryが同じruntimeを利用するか。
+- Process-global mutable stateが残っていないか。
+- SQS clientを重複生成・重複destroyしないか。
+- Send失敗時にDB状態を成功扱いしないか。
+- FIFO dedup keyがattempt単位で安定しているか。
+- IAM action / resourceが完全一致で検証されるか。
+- HTTP rollback時にSQS設定を要求しないか。
+
+## テスト
+
+- HTTP self-enqueue
+- Standard SQS SendMessage
+- FIFO group / dedup
+- Client共有 / single destroy
+- Stale scanner runtime enqueue injection
+- Queue type欠落
+- Send failure / raw error非露出
+- Worker role SendMessage欠落
+- DLQ read / wildcard / purge権限拡大
+- 全品質ゲート
