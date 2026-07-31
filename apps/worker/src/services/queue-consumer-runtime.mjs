@@ -28,6 +28,7 @@ export const createWorkerQueueConsumerRuntime = ({
   processMessage,
   retryEnqueueBaseUrl = getDefaultRetryEnqueueBaseUrl(),
   eventLogger = createNoopQueueEventLogger(),
+  httpFetchImpl = globalThis.fetch,
   sqsClientFactory = defaultSqsClientFactory,
   receiveCommandFactory = defaultReceiveCommandFactory,
   deleteCommandFactory = defaultDeleteCommandFactory,
@@ -51,10 +52,14 @@ export const createWorkerQueueConsumerRuntime = ({
     const createProducer = ({ eventLogger: producerLogger, source }) =>
       createHttpQueueProducer({
         baseUrl: retryEnqueueBaseUrl,
+        fetchImpl: httpFetchImpl,
         eventLogger: producerLogger,
         source
       });
-    const restoreDefaultProducer = setDefaultSubmissionQueueProducerFactory(createProducer);
+    const restoreDefaultProducer = setDefaultSubmissionQueueProducerFactory(
+      createProducer,
+      { transport: config.transport }
+    );
     let closed = false;
 
     return Object.freeze({
@@ -115,7 +120,10 @@ export const createWorkerQueueConsumerRuntime = ({
       source,
       eventLogger: producerLogger
     });
-  const restoreDefaultProducer = setDefaultSubmissionQueueProducerFactory(createProducer);
+  const restoreDefaultProducer = setDefaultSubmissionQueueProducerFactory(
+    createProducer,
+    { transport: config.transport }
+  );
 
   let closed = false;
   const close = async () => {
