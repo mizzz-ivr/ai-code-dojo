@@ -36,8 +36,8 @@
 12. Workerがexpected attempt / keyとcompletion guardで結果を保存する。
 13. DB terminal保存、retry処理完了、安全なno-op確認後だけSQS messageをDeleteMessageする。
 14. Invalid message、unexpected error、ownership喪失、保存未確認ではmessageを削除しない。
-15. Infrastructure failure時はnew attemptを作成し、選択中Worker queue runtimeへ再投入する。
-16. Processing lease期限切れ時はstale recoveryがnew attemptへ回収し、選択中runtimeへ再投入する。
+15. Infrastructure failure時はnew attemptを作成し、Worker runtime `enqueue()`へ渡す。
+16. Processing lease期限切れ時はstale recoveryがnew attemptへ回収し、注入されたruntime `enqueue()`へ渡す。
 17. 未削除messageはvisibility expiry後に再配送され、RedrivePolicy上限でDLQへ移る。
 18. Webがsubmission結果をポーリング表示する。
 
@@ -154,10 +154,12 @@ DeleteMessageしない条件:
 
 ### Runtime接続
 
-1. Worker runtime作成時にprocess-local default producer factoryを登録する。
-2. Existing retry / stale recoveryは共通`enqueueSubmissionAttempt`を呼ぶ。
-3. 共通入口が登録済みHTTP / SQS producerへmessageを渡す。
-4. Runtime close時にregistrationをrestoreする。
+1. Worker runtimeが選択transportのproducerを保持し、`enqueue()` portを公開する。
+2. Application retryはserverからruntime `enqueue()`を直接呼ぶ。
+3. Stale scanner起動時にruntime `enqueue()`を`enqueueAttempt`として明示注入する。
+4. Runtime `enqueue()`が共通`enqueueSubmissionAttempt`へproducerを明示してmessageを渡す。
+5. Process-global registrationや共有可変singletonは使用しない。
+6. SQS shutdown時はpoll停止後にclientをdestroyする。
 
 HTTP:
 
