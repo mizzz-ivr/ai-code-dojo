@@ -1,6 +1,6 @@
 # current-status（正本）
 
-最終更新: 2026-07-28（Issue #125 SQS CloudFormation infrastructureをレビュー中）
+最終更新: 2026-07-30（Issue #127 / PR #128 GitHub OIDC staging change setの品質ゲート成功）
 
 ## この文書の目的
 
@@ -16,9 +16,10 @@
 - Issue #119 / PR #120でSQS producer adapter PoCをmerge済み。
 - Issue #121 / PR #122でAWS SDK v3とAPI queue transport runtime wiringをmerge済み。
 - Issue #123 / PR #124でWorker SQS consumer PoCをmerge済み。
-- Issue #125 / PR #126でSQS source queue / DLQ / RedrivePolicy / IAM roleのCloudFormation IaCを実装し、Ready for review。
-- Issue #125の設計・CI・rollout境界はNotionへ同期済み。
-- Linearはworkspaceの無料Issue上限によりIssue #125相当を新規登録できないため、GitHub Issue / PR、Repository docs、Notionを管理正本とする。
+- Issue #125 / PR #126でSQS source queue / DLQ / RedrivePolicy / IAM roleのCloudFormation IaCをmerge済み。
+- Issue #127 / PR #128でstaging専用GitHub OIDC trust、deployment role、CloudFormation execution role、review-only change set workflowを実装し、全品質ゲート成功済み。
+- Issue #127の設計・実装・PR・CI状況はNotionへ同期済み。
+- Linearはworkspaceの無料Issue上限によりIssue #127を新規登録できないため、GitHub Issue / PR、Repository docs、Notionを管理正本とする。
 - API直接実行禁止、hidden tests非公開、challenge version追加方式の不変条件を維持する。
 
 ## 実装済みのqueue runtime
@@ -43,8 +44,8 @@
 
 ## Issue #125 / PR #126の変更
 
-- `infra/aws/cloudformation/sqs-queue-stack.json`を追加する。
-- Standard / FIFOを`QueueType` parameterで選択可能にする。
+- `infra/aws/cloudformation/sqs-queue-stack.json`を追加した。
+- Standard / FIFOを`QueueType` parameterで選択可能にした。
 - Source queueとDLQを同じqueue typeで作成する。
 - Source queueはretention 4日、long polling 20秒、visibility 90秒とする。
 - DLQはretention 14日、`RedriveAllowPolicy=byQueue`とする。
@@ -56,9 +57,28 @@
 - Queue削除・置換時は`Retain`してmessage消失を防ぐ。
 - Stack outputsでQueueUrl / QueueArn / RoleArn / runtime設定例を提供する。
 - `pnpm infra:validate`でAWS credentials不要のstatic validationを行う。
-- App qualityへ`infra-validation` jobを追加する。
-- Build artifactへ`infra`を含める。
-- AWS CLI validate / change set / execute / rollback / retained queue cleanupをrunbook化する。
+- App qualityへ`infra-validation` jobを追加した。
+- Build artifactへ`infra`を含めた。
+- AWS CLI validate / change set / execute / rollback / retained queue cleanupをrunbook化した。
+
+## Issue #127 / PR #128の変更
+
+- `infra/aws/cloudformation/github-oidc-deployment-role-stack.json`を追加した。
+- Existing GitHub OIDC provider ARNと実際のstaging subjectをparameterで受け取る。
+- Subjectは`mizzz-ivr/ai-code-dojo`のlegacy形式、またはowner / repository IDを含むimmutable形式だけを許可する。
+- OIDC trustは`aud=sts.amazonaws.com`とstaging subjectを`StringEquals`で完全一致させる。
+- GitHub Actions deployment roleとCloudFormation execution roleを分離した。
+- Deployment roleはtemplate validation、change set作成・参照、対象execution roleのPassRoleだけを許可する。
+- Deployment roleへ`ExecuteChangeSet` / `CreateStack` / `UpdateStack` / `DeleteStack`を付与しない。
+- CloudFormation execution roleはstaging grading queueと対象stack生成roleのresource範囲へ限定する。
+- `.github/workflows/deploy-sqs-staging-change-set.yml`は`workflow_dispatch` / main / GitHub Environment `staging`専用とした。
+- WorkflowはOIDC認証し、change setを作成・要約するがexecuteしない。
+- AWS account IDをmaskし、QueueUrl / credentials / ARN実値をSummaryへ出さない。
+- 手動入力はGitHub expressionから環境変数へ一度隔離し、shellへ直接埋め込まない。
+- `DescribeChangeSet`はAWS認可仕様に合わせ、target stack ARNとchange set name conditionで限定する。
+- OIDC trust、PassRole、権限allowlist、workflow trigger、長期credential不使用をstatic validatorで検査する。
+- Security regression unit testを8件追加した。
+- 実AWS bootstrap / change set / execute / production / ECS関連付けは対象外とする。
 
 ## Correctness・セキュリティ境界
 
@@ -71,11 +91,14 @@
 - Learnerへqueue / outbox / DLQ / delivery count / internal errorを返さない。
 - DLQとsubmission `infra_failed`を分離する。
 - Producer / consumer roleを分離し、wildcard resource、PurgeQueue、queue管理、DLQ read権限を付与しない。
-- CIから実AWS resourceを作成しない。
+- GitHub OIDC trustはaud / sub完全一致とし、Environment protectionを併用する。
+- Deployment roleとCloudFormation execution roleを分離する。
+- Review-only workflowから実AWS resourceをexecuteしない。
+- 通常PR CIからAWS APIを呼び出さない。
 
 ## Test・validation状況
 
-Ready移行前のfinal code / docs headで以下は成功済み。
+Issue #127 / PR #128のfinal head `7294d3a413538e04de5c6930f328bfe758ca67ed` で以下は成功済み。
 
 - Docs validation
 - Frozen lockfile install
@@ -87,25 +110,23 @@ Ready移行前のfinal code / docs headで以下は成功済み。
 - Infra validation
 - Build
 
-Integration testはdocs更新後の初回実行で一時失敗したが、failed jobのみ再実行して成功を確認した。
+Static validationでは次を回帰検知する。
 
-Static validatorは次を検査する。
-
-- CloudFormation JSON構文
-- Standard / FIFO命名とtype一致
-- SSE / retention / long polling / visibility
-- RedrivePolicy / RedriveAllowPolicy
-- Source ARN組み立てによる循環依存回避
-- TLS deny
-- IAM action / resource完全一致
-- Stack outputs
-- Literal account ID / access key ID不在
+- OIDC subject default / wildcard / 別Repository指定
+- OIDC aud / sub trust緩和
+- Deployment roleへのchange set execute / stack mutation権限追加
+- PassRole resource / service制約拡大
+- CloudFormation execution roleのwildcard resource
+- Workflowの自動trigger / 長期credential参照
+- Workflow inputのshell直接展開
+- 固定AWS account ID / access key混入
 
 ## 現時点の非対応・運用制約
 
-- 実AWS accountへのstack create / update / deleteは未実施。
+- 実AWS accountへのOIDC bootstrap stack create / update / deleteは未実施。
+- 実AWS accountへのSQS stack create / update / deleteは未実施。
 - Production deploymentはHTTP producer / consumerのまま。
-- GitHub OIDC provider / deployment roleは未実装。
+- GitHub Environment `staging`のvariables / branch protectionは未設定。
 - ECS / Lambda / EC2 workloadとIAM roleの関連付けは未実装。
 - VPC endpoint / network pathは未実装。
 - Customer managed KMS key / key policyは未実装。
@@ -119,29 +140,35 @@ Static validatorは次を検査する。
 
 ## 優先順位（直近）
 
-1. Issue #125 / PR #126をレビュー・mergeする。
-2. 限定環境のdeployment wiringとGitHub OIDC deployment roleを別Issueで整備する。
-3. Worker application retry producerを選択queue runtimeへ統合する。
-4. DLQ replay / purge運用を整備する。
-5. Queue / outbox eventをmetrics backend / dashboard / alertへ接続する。
-6. Outbox claim / leaseを追加する。
-7. Runner隔離強化とhidden tests漏洩防止を継続する。
+1. PR #128をレビュー・mergeする。
+2. 別承認でstaging OIDC bootstrap / change set作成を実AWS検証する。
+3. ECS task definitionへのproducer / consumer role関連付けとruntime environment注入を別Issueで整備する。
+4. Worker application retry producerを選択queue runtimeへ統合する。
+5. DLQ replay / purge運用を整備する。
+6. Queue / outbox eventをmetrics backend / dashboard / alertへ接続する。
+7. Outbox claim / leaseを追加する。
+8. Runner隔離強化とhidden tests漏洩防止を継続する。
 
 ## Branch cleanup 状態
 
-- PR #124は2026-07-28（日本時間）にmerge済み。
 - PR #124のhead branch `feat/sqs-consumer-poc` は削除済み。
-- Issue #125の作業branchは `feat/sqs-cloudformation-infra`。
-- PR #126 merge後にhead branchを削除する。
+- PR #126は2026-07-30（日本時間）にmerge済み。
+- PR #126のhead branch `feat/sqs-cloudformation-infra` は削除確認対象。
+- Issue #127 / PR #128の作業branchは `feat/staging-oidc-change-set`。
+- PR #128 merge後にhead branchを削除する。
 
 ## 参照先
 
 - Repository: `https://github.com/mizzz-ivr/ai-code-dojo`
 - Issue #125: `https://github.com/mizzz-ivr/ai-code-dojo/issues/125`
 - PR #126: `https://github.com/mizzz-ivr/ai-code-dojo/pull/126`
-- Notion: `https://app.notion.com/p/3ac7322f39fa81f48996e91be4913479`
-- CloudFormation template: `infra/aws/cloudformation/sqs-queue-stack.json`
-- CloudFormation runbook: `docs/runbooks/2026-07-28-sqs-cloudformation-infra-runbook.md`
+- Issue #127: `https://github.com/mizzz-ivr/ai-code-dojo/issues/127`
+- PR #128: `https://github.com/mizzz-ivr/ai-code-dojo/pull/128`
+- Notion #127: `https://app.notion.com/p/3ad7322f39fa813ab90ef7e9a7f64ec2`
+- SQS CloudFormation template: `infra/aws/cloudformation/sqs-queue-stack.json`
+- OIDC deployment template: `infra/aws/cloudformation/github-oidc-deployment-role-stack.json`
+- Staging change set workflow: `.github/workflows/deploy-sqs-staging-change-set.yml`
+- OIDC staging runbook: `docs/runbooks/2026-07-30-github-oidc-staging-change-set-runbook.md`
 - SQS consumer runbook: `docs/runbooks/2026-07-28-sqs-consumer-poc-runbook.md`
 - Queue運用設計: `docs/reports/2026-07-23-queue-operations-visibility-dlq-backoff-design.md`
 - Worker障害復旧: `docs/runbooks/2026-05-18-worker-failure-recovery-runbook.md`

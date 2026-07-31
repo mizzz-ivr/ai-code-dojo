@@ -1,0 +1,287 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "ai-code-dojo staging GitHub OIDC deployment and CloudFormation execution roles",
+  "Parameters": {
+    "GitHubOidcProviderArn": {
+      "Type": "String",
+      "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):iam::[0-9]{12}:oidc-provider/token\\.actions\\.githubusercontent\\.com$",
+      "ConstraintDescription": "Use the existing token.actions.githubusercontent.com IAM OIDC provider ARN."
+    },
+    "GitHubOidcSubject": {
+      "Type": "String",
+      "AllowedPattern": "^repo:(mizzz-ivr/ai-code-dojo|mizzz-ivr@[0-9]+/ai-code-dojo@[0-9]+):environment:staging$",
+      "ConstraintDescription": "Use the exact legacy or immutable ai-code-dojo repository subject for the staging GitHub Environment."
+    },
+    "TargetStackName": {
+      "Type": "String",
+      "Default": "ai-code-dojo-staging-sqs",
+      "AllowedPattern": "^[a-z][a-z0-9-]{2,63}$",
+      "ConstraintDescription": "Use a 3-64 character lowercase CloudFormation stack name."
+    },
+    "EnvironmentName": {
+      "Type": "String",
+      "Default": "staging",
+      "AllowedValues": [
+        "staging"
+      ]
+    }
+  },
+  "Resources": {
+    "CloudFormationExecutionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "Description": "Executes the ai-code-dojo staging SQS CloudFormation stack",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudformation.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ManageStagingGradingQueues",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "ManageStagingGradingQueues",
+                  "Effect": "Allow",
+                  "Action": [
+                    "sqs:CreateQueue",
+                    "sqs:GetQueueAttributes",
+                    "sqs:GetQueueUrl",
+                    "sqs:ListQueueTags",
+                    "sqs:TagQueue",
+                    "sqs:UntagQueue",
+                    "sqs:SetQueueAttributes",
+                    "sqs:DeleteQueue"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:ai-code-dojo-${EnvironmentName}-grading*"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "ManageStagingQueueWorkloadRoles",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "ManageGeneratedQueueWorkloadRoles",
+                  "Effect": "Allow",
+                  "Action": [
+                    "iam:CreateRole",
+                    "iam:DeleteRole",
+                    "iam:GetRole",
+                    "iam:TagRole",
+                    "iam:UntagRole",
+                    "iam:PutRolePolicy",
+                    "iam:DeleteRolePolicy",
+                    "iam:GetRolePolicy",
+                    "iam:ListRolePolicies",
+                    "iam:UpdateAssumeRolePolicy"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${TargetStackName}-*"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Application",
+            "Value": "ai-code-dojo"
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "EnvironmentName"
+            }
+          },
+          {
+            "Key": "RolePurpose",
+            "Value": "cloudformation-sqs-execution"
+          }
+        ]
+      }
+    },
+    "GitHubActionsDeploymentRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "Description": "Creates and reviews ai-code-dojo staging SQS change sets from GitHub Actions",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Federated": {
+                  "Ref": "GitHubOidcProviderArn"
+                }
+              },
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                  "token.actions.githubusercontent.com:sub": {
+                    "Ref": "GitHubOidcSubject"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ValidateSqsTemplate",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "ValidateSqsTemplate",
+                  "Effect": "Allow",
+                  "Action": "cloudformation:ValidateTemplate",
+                  "Resource": "*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "CreateAndReviewStagingSqsChangeSets",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "CreateTargetStackChangeSet",
+                  "Effect": "Allow",
+                  "Action": "cloudformation:CreateChangeSet",
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${TargetStackName}/*"
+                  },
+                  "Condition": {
+                    "ArnEquals": {
+                      "cloudformation:RoleArn": {
+                        "Fn::GetAtt": [
+                          "CloudFormationExecutionRole",
+                          "Arn"
+                        ]
+                      }
+                    },
+                    "StringLike": {
+                      "cloudformation:ChangeSetName": "ai-code-dojo-staging-*"
+                    }
+                  }
+                },
+                {
+                  "Sid": "ReviewTargetStack",
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudformation:DescribeStacks",
+                    "cloudformation:ListChangeSets",
+                    "cloudformation:GetTemplate"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${TargetStackName}/*"
+                  }
+                },
+                {
+                  "Sid": "ReviewGeneratedChangeSet",
+                  "Effect": "Allow",
+                  "Action": "cloudformation:DescribeChangeSet",
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${TargetStackName}/*"
+                  },
+                  "Condition": {
+                    "StringLike": {
+                      "cloudformation:ChangeSetName": "ai-code-dojo-staging-*"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "PassApprovedCloudFormationExecutionRole",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "PassApprovedExecutionRole",
+                  "Effect": "Allow",
+                  "Action": "iam:PassRole",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "CloudFormationExecutionRole",
+                      "Arn"
+                    ]
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "iam:PassedToService": "cloudformation.amazonaws.com"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Application",
+            "Value": "ai-code-dojo"
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "EnvironmentName"
+            }
+          },
+          {
+            "Key": "RolePurpose",
+            "Value": "github-actions-change-set-review"
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "GitHubActionsDeploymentRoleArn": {
+      "Description": "Set as the AWS_STAGING_DEPLOY_ROLE_ARN GitHub Environment variable.",
+      "Value": {
+        "Fn::GetAtt": [
+          "GitHubActionsDeploymentRole",
+          "Arn"
+        ]
+      }
+    },
+    "CloudFormationExecutionRoleArn": {
+      "Description": "Set as the AWS_STAGING_CFN_EXECUTION_ROLE_ARN GitHub Environment variable.",
+      "Value": {
+        "Fn::GetAtt": [
+          "CloudFormationExecutionRole",
+          "Arn"
+        ]
+      }
+    },
+    "ExpectedGitHubOidcSubject": {
+      "Value": {
+        "Ref": "GitHubOidcSubject"
+      }
+    },
+    "TargetStackName": {
+      "Value": {
+        "Ref": "TargetStackName"
+      }
+    }
+  }
+}

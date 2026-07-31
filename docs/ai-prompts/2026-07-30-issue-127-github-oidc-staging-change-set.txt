@@ -1,0 +1,68 @@
+# Issue #127 GitHub OIDC staging change set 実装prompt
+
+あなたは `mizzz-ivr/ai-code-dojo` のシニアPM・テックリード・ソフトウェアアーキテクト・レビュアーです。
+
+## 最優先ルール
+
+1. `docs/ai-protocol/PROMPT.txt`を読む。
+2. README / project-overview / current-status / active-issues / system-overviewを正本とする。
+3. APIで提出コードを直接実行しない。
+4. Hidden testsをlearnerへ返さない。
+5. Challengeはversion追加方式とする。
+6. Issue #127以外の機能変更を混在させない。
+7. PR、commit、Issue、docsは日本語とする。
+8. Branch名へ`codex`を含めない。
+
+## Current state
+
+- Issue: #127
+- Branch: `feat/staging-oidc-change-set`
+- Previous PR: #126（merged）
+- Production transport: HTTPのまま
+- 実AWS deploy: 未実施
+- Linear: 無料Issue上限により登録不可
+- Notion: Issue #127ページを管理補助として使用する
+
+## 目的
+
+staging専用のGitHub OIDC trust、deployment role、CloudFormation execution role、review-only change set workflowを実装する。
+
+## 必須境界
+
+- OIDC provider ARNとsubjectをparameterで受け取る。
+- Subjectはstaging Environmentの完全一致としwildcardを許可しない。
+- `aud=sts.amazonaws.com`を完全一致で検証する。
+- Deployment roleとCloudFormation execution roleを分離する。
+- Deployment roleはValidateTemplate / CreateChangeSet / read / scoped PassRoleだけとする。
+- ExecuteChangeSet / CreateStack / UpdateStack / DeleteStackを付与しない。
+- Workflowは`workflow_dispatch`専用、main、GitHub Environment `staging`とする。
+- AWS access key secretを使用しない。
+- Workflowはchange setを作成・表示するがexecuteしない。
+- PR CIはAWS credentials不要のstatic validationだけとする。
+- HTTP producer / consumerをrollback先として維持する。
+
+## 非対象
+
+- 実AWS bootstrap / SQS deploy
+- Change set execute
+- Production
+- ECS / Lambda / EC2 resource
+- Workload role関連付け
+- VPC endpoint / KMS
+- Runtime transport切替
+- DLQ replay / purge
+- Metrics / alert
+- Application retry producer切替
+- Outbox claim / lease
+
+## レビュー観点
+
+- OIDC trustがaud / sub完全一致か。
+- Immutable OIDC subjectを渡せる設計か。
+- GitHub Environment protectionがrunbookに明記されているか。
+- PassRoleがexecution role / CloudFormationだけか。
+- Deployment roleにstack mutation権限がないか。
+- Execution roleのresource範囲がstagingに限定されているか。
+- WorkflowがAWS ARN / account ID / QueueUrlを出力しないか。
+- No-changeを安全に扱うか。
+- Static validatorがsecurity regressionを検知するか。
