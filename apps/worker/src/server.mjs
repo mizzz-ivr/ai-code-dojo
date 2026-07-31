@@ -13,7 +13,6 @@ import {
   startRetryAttempt,
   updateSubmissionForAttempt
 } from '../../api/src/repositories/submission-repository.mjs';
-import { enqueueSubmissionAttempt } from '../../api/src/services/submission-service.mjs';
 import { getApplicationRetryBackoffConfig } from './config/application-retry-backoff-config.mjs';
 import { getProcessingLeaseConfig } from './config/processing-lease-config.mjs';
 import { loadWorkerQueueConsumerConfig } from './config/queue-consumer-config.mjs';
@@ -36,6 +35,7 @@ const staleRecoveryConfig = getStaleRecoveryConfig(process.env, {
 });
 const queueConsumerConfig = loadWorkerQueueConsumerConfig(process.env);
 const queueEventLogger = createQueueEventLogger({ service: 'worker' });
+let queueConsumerRuntime;
 
 if (useIsolationPoc && isProduction) {
   throw new Error('RUNNER_ISOLATION_POC must not be enabled in production.');
@@ -204,11 +204,10 @@ const handleInfrastructureFailure = async ({ submissionId, submission, error }) 
     });
   }
 
-  const enqueued = await enqueueSubmissionAttempt({
+  const enqueued = await queueConsumerRuntime.enqueue({
     submissionId,
     gradingAttempt: retriedSubmission.gradingAttempt,
     attemptIdempotencyKey: retriedSubmission.attemptIdempotencyKey,
-    runnerApiBaseUrl: retryEnqueueBaseUrl,
     eventLogger: queueEventLogger,
     source: 'application_retry'
   });
@@ -365,9 +364,10 @@ const processSubmission = async ({ submissionId, gradingAttempt, attemptIdempote
   }
 };
 
-const queueConsumerRuntime = createWorkerQueueConsumerRuntime({
+queueConsumerRuntime = createWorkerQueueConsumerRuntime({
   config: queueConsumerConfig,
   processMessage: processSubmission,
+  retryEnqueueBaseUrl,
   eventLogger: queueEventLogger
 });
 
@@ -483,6 +483,7 @@ server.listen(port, () => {
     config: staleRecoveryConfig,
     maxInfraRetryAttempts,
     retryEnqueueBaseUrl,
+    enqueueAttempt: queueConsumerRuntime.enqueue,
     eventLogger: queueEventLogger
   });
 });
