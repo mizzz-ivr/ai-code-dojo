@@ -15,7 +15,7 @@
 - Queue message contract、HTTP / SQS producer / consumer、構造化event、application retry backoff、transactional outboxまで実装済み。
 - Issue #125 / PR #126でSQS source queue / DLQ / RedrivePolicy / workload IAM roleのCloudFormation IaCをmerge済み。
 - Issue #127 / PR #128でstaging GitHub OIDC認証とreview-only change set workflowをmerge済み。
-- Issue #129 / PR #130でWorker application retry / stale recoveryを選択中queue runtimeへ統合し、依存注入後の品質ゲート成功済み。
+- Issue #129 / PR #130でWorker application retry / stale recoveryを選択中queue runtimeへ統合し、Ready移行前の全品質ゲート成功済み。
 - Linearは無料Issue上限のためIssue #129を登録できず、GitHub / Repository docs / Notionを管理正本とする。
 - API直接実行禁止、hidden tests非公開、challenge version追加方式の不変条件を維持する。
 
@@ -96,8 +96,9 @@
 
 ## Issue #129 / PR #130のテスト状況
 
-依存注入後のcode headで以下は成功済み。
+Ready移行前のcode / docs headで以下は成功済み。
 
+- Docs validation
 - Frozen lockfile install
 - Lint
 - Typecheck
@@ -105,6 +106,7 @@
 - Integration test
 - Schema validation
 - Infra validation
+- Build
 
 追加した主な回帰観点:
 
@@ -118,7 +120,7 @@
 - Send失敗時のraw error非露出。
 - Worker roleのSendMessage欠落・権限拡大検知。
 
-Final docs headでBuildを含む全品質ゲートを再確認する。
+Review threadは0件で、PRはmergeableである。
 
 ## 現時点の非対応・運用制約
 
