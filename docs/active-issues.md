@@ -17,7 +17,7 @@
 ### #129 Worker application retryを選択中のqueue runtimeへ統合する
 
 - 優先度: P2
-- 状態: Open / Review
+- 状態: Open / Ready for review
 - GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/129`
 - GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/130`
 - Notion: `https://app.notion.com/p/3ae7322f39fa81a59902f769db53cd76`
@@ -78,7 +78,7 @@
 #### 現在の確認結果
 
 - GitHub Issue #129: Created
-- GitHub PR #130: Draft / mergeable
+- GitHub PR #130: Draft解除対象 / mergeable
 - Notion page: Created
 - Linear Issue: 無料Issue上限により作成失敗
 - HTTP self-enqueue test: Success
@@ -89,13 +89,16 @@
 - Send failure sanitization test: Success
 - Queue type startup validation: Success
 - Worker IAM static validation: Success
+- Docs validation: Success
+- Frozen lockfile install: Success
 - Lint: Success
 - Typecheck: Success
 - Unit test: Success
 - Integration test: Success
 - Schema validation: Success
 - Infra validation: Success
-- Final Build / docs head CI: 確認対象
+- Build: Success
+- Review thread: 0件
 - 実AWS validation / transport切替: 未実施
 
 ## 保留Issue候補
