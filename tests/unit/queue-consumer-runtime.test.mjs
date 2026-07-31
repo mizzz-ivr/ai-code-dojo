@@ -180,6 +180,26 @@ test('SQS retry producerはSendMessage失敗をfalseとして返す', async () =
   assert.equal(await runtime.close(), true);
 });
 
+test('SQS runtimeはqueue type欠落をAWS client生成前に拒否する', () => {
+  let clientFactoryCalled = false;
+  assert.throws(
+    () => createWorkerQueueConsumerRuntime({
+      config: {
+        ...sqsConfig,
+        sqs: { ...sqsConfig.sqs, queueType: undefined }
+      },
+      processMessage: async () => ({ acknowledge: true }),
+      sqsClientFactory: () => {
+        clientFactoryCalled = true;
+        return { send: async () => ({}) };
+      },
+      ...commandFactories
+    }),
+    /queueType must be standard or fifo/
+  );
+  assert.equal(clientFactoryCalled, false);
+});
+
 test('SQS runtimeは不正なclient factoryを起動前に拒否する', () => {
   assert.throws(
     () => createWorkerQueueConsumerRuntime({
