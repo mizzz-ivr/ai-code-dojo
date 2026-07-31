@@ -2,19 +2,23 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "ConsumeFromEncryptedGradingQueue",
+      "Sid": "ConsumeAndRetryEncryptedGradingQueue",
       "Effect": "Allow",
       "Action": [
         "sqs:ReceiveMessage",
         "sqs:DeleteMessage",
-        "sqs:ChangeMessageVisibility"
+        "sqs:ChangeMessageVisibility",
+        "sqs:SendMessage"
       ],
       "Resource": "arn:aws:sqs:<region>:<account-id>:<queue-name>"
     },
     {
-      "Sid": "DecryptGradingQueueMessages",
+      "Sid": "UseGradingQueueEncryptionKey",
       "Effect": "Allow",
-      "Action": "kms:Decrypt",
+      "Action": [
+        "kms:Decrypt",
+        "kms:GenerateDataKey"
+      ],
       "Resource": "arn:aws:kms:<region>:<account-id>:key/<key-id>"
     }
   ]
