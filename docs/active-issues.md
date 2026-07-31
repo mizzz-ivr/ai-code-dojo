@@ -1,6 +1,6 @@
 # active-issues（正本）
 
-最終更新: 2026-07-31（Issue #129 / PR #130 Worker retry queue runtimeをレビュー中）
+最終更新: 2026-08-01（Issue #131 Managed DB / ECS topology設計中）
 
 ## この文書の目的
 
@@ -14,103 +14,113 @@
 
 ## 進行中Issue
 
-### #129 Worker application retryを選択中のqueue runtimeへ統合する
+### #131 Managed DB移行とAPI / Worker実行トポロジーを設計する
 
 - 優先度: P2
-- 状態: Open / Ready for review
-- GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/129`
-- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/130`
-- Notion: `https://app.notion.com/p/3ae7322f39fa81a59902f769db53cd76`
-- Linear: 無料Issue上限により作成不可。GitHub / Repository docs / Notionを管理正本とする。
-- Branch: `feat/worker-retry-queue-runtime`
-- 目的: Workerが生成するapplication retry / stale recoveryを、`WORKER_QUEUE_CONSUMER`で選択中のHTTP / SQS runtimeへ統合する。
+- 状態: Open / In Progress
+- GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/131`
+- Linear: 無料Issue上限により作成不可。GitHub Issue / Repository docs / Notionを管理正本とする。
+- Branch: `docs/managed-db-topology-design`
+- Scope: docs-only
+- 目的: SQLiteからManaged PostgreSQLへの移行方針とAPI / Worker / MigratorのECS実行トポロジーを確定し、後続実装を安全に分割する。
+
+#### 背景
+
+- 現行DBは固定SQLite `.data/app.db`。
+- API / Workerを別ECS taskへ分離するとDB fileを共有できない。
+- API / Workerを同一taskへ同居させるとtask roleが共通になり、producer / Worker最小権限を維持できない。
+- Repository層は`DatabaseSync`、`?` placeholder、`BEGIN IMMEDIATE`、`PRAGMA`、`write.changes`へ直接依存する。
+- ECS wiring前にdriver、transaction、migration ownership、secret、network、cutoverを確定する必要がある。
+
+#### 決定事項
+
+- Target DBはAmazon RDS for PostgreSQL provisioned。
+- API / Workerは別ECS service / task definition。
+- Schema migrationはone-shot Migrator task。
+- PostgreSQL roleをAPI / Worker / Migratorで分離。
+- Secrets Manager password + TLS verify-fullを初期方式とする。
+- IAM DB authenticationとRDS Proxyは初回対象外。
+- Repositoryとdriverの間にasync `DatabaseClient`を導入する。
+- 初回cutoverではID / JSON / timestampのtext表現を維持する。
+- Stale recoveryはPostgreSQL row lockを使用する。
+- Outbox claim / lease前はAPI desired countを1に固定する。
+- Cutoverは短時間maintenance方式。
+- Write再開後のSQLite単純切戻しを禁止する。
 
 #### 対象
 
-- Worker runtime `enqueue()` port
-- Application retryへのruntime enqueue明示注入
-- Stale scannerへの`enqueueAttempt`明示注入
-- Process-global registrationを使用しない責務分離
-- HTTP self-enqueue互換
-- SQS consumer / retry producerのclient共有
-- QueueUrl suffixによるStandard / FIFO判定
-- FIFO MessageGroupId / MessageDeduplicationId契約再利用
-- SendMessage失敗時の既存`infra_failed`終端化
-- Worker roleへのsource queue `sqs:SendMessage`追加
-- Customer managed KMS policy例の`kms:GenerateDataKey`
-- Static IAM validation / security regression test
-- Runbook / log / prompt / handoff / canonical docs / Notion
+- SQLite固有依存のファイル単位棚卸し
+- RDS PostgreSQL採用ADR
+- API / Worker / Migrator topology
+- AWS task role / execution role / PostgreSQL role境界
+- Secret / TLS / security group / connection pool設計
+- Database adapter contract
+- Transactional outbox / lease / fencing / completion guard維持条件
+- Export / import / validation / cutover / rollback設計
+- Follow-up Issue分割
+- ADR / architecture / report / risk / runbook / log / prompt / handoff
+- Canonical docs / Notion同期
 
 #### 非対象
 
-- ECS task definition / service / cluster
-- SQLiteからmanaged DBへの移行
-- 実AWS deploy / transport切替
-- Production environment
-- Durable retry scheduling
-- DLQ replay / purge
-- Queue / outbox metrics backend・dashboard・alert
-- Outbox claim / lease
-- Runner / hidden tests / auth / admin / learner UI変更
-- DB schema / migration / seed変更
+- PostgreSQL driver導入
+- Repository code変更
+- PostgreSQL schema implementation
+- Actual RDS / ECS / Secrets Manager resource
+- Actual data migration
+- Production transport切替
+- SQS切替
+- RDS Proxy
+- IAM DB authentication
+- JSONB / timestamptz / uuid最適化
 
 #### 完了条件
 
-- HTTP選択時にAWS clientを生成しない。
-- HTTP retry / stale recoveryが既存`POST /jobs`を利用する。
-- SQS選択時にconsumer / retry producerが同一clientを共有する。
-- Application retryがruntime `enqueue()`を直接利用する。
-- Stale recoveryが注入されたruntime `enqueue()`を利用する。
-- Process-global producer registrationを使用しない。
-- Runtime close時にclientを1回だけdestroyする。
-- QueueUrlからStandard / FIFOを正しく判定する。
-- FIFOで既存group / dedup contractを維持する。
-- Application retry / stale recoveryが共通queue message contractを通る。
-- Enqueue失敗を成功扱いにしない。
-- Worker role actionがReceive / Delete / ChangeVisibility / Sendの完全一致になる。
-- API producer roleはSendだけを維持する。
-- Wildcard resource、DLQ read、PurgeQueue、queue管理権限を追加しない。
-- QueueUrl / ReceiptHandle / credentials / raw attempt key / raw SDK errorをeventへ出さない。
-- Processing lease / attempt fencing / completion guardを変更しない。
-- HTTPを既定値・rollback先として維持する。
-- 全品質ゲートが成功する。
+- RDS PostgreSQL採用理由と不採用案をADRへ記載する。
+- API / Worker / Migratorのtask / IAM / DB role境界を確定する。
+- SQLite固有処理とPostgreSQL差分をファイル単位で整理する。
+- Async DatabaseClient contractを定義する。
+- Submission / outbox atomicity、lease、attempt fencing、completion guardの維持方法を定義する。
+- Outbox multiple dispatcherのscale gateを定義する。
+- Secret、TLS、network、pool、migration ownershipを定義する。
+- Short maintenance cutoverとrollback checkpointを定義する。
+- Follow-up実装Issueを依存順付きで分割する。
+- Repository正本とNotionを同期する。
+- Docs validationが成功する。
 
-#### 現在の確認結果
+#### 成果物
 
-- GitHub Issue #129: Created
-- GitHub PR #130: Draft解除対象 / mergeable
-- Notion page: Created
-- Linear Issue: 無料Issue上限により作成失敗
-- HTTP self-enqueue test: Success
-- Standard SQS retry enqueue test: Success
-- FIFO group / dedup test: Success
-- SQS client shared / single destroy test: Success
-- Stale runtime enqueue injection test: Success
-- Send failure sanitization test: Success
-- Queue type startup validation: Success
-- Worker IAM static validation: Success
-- Docs validation: Success
-- Frozen lockfile install: Success
-- Lint: Success
-- Typecheck: Success
-- Unit test: Success
-- Integration test: Success
-- Schema validation: Success
-- Infra validation: Success
-- Build: Success
-- Review thread: 0件
-- 実AWS validation / transport切替: 未実施
+- `docs/adr/2026-08-01-managed-postgresql-ecs-service-topology.md`
+- `docs/architecture/managed-db-ecs-topology.md`
+- `docs/reports/2026-08-01-sqlite-postgresql-migration-design.md`
+- `docs/risks/2026-08-01-managed-db-migration-risks.md`
+- `docs/runbooks/2026-08-01-sqlite-postgresql-cutover-draft.md`
+- `docs/logs/2026-08-01-issue-131-managed-db-topology-design.md`
+- `docs/handoff/2026-08-01-issue-131-managed-db-topology-design-handoff.md`
 
-## 保留Issue候補
+## Blocked Issue
 
 ### ECS task definitionへのrole関連付けとruntime environment注入
 
-- 状態: Blocked / Design required
-- 理由1: 現行は固定SQLite `.data/app.db`を使用し、API / Worker別taskで共有できない。
-- 理由2: API / Workerを同一taskへ同居させるとtask roleが共通になり、producer / Worker最小権限分離を維持できない。
-- 再開条件: Managed DB移行方針とAPI / Worker実行トポロジーが確定すること。
+- 状態: Blocked / Implementation dependencies required
+- Design blocker: Issue #131で解消対象。
+- Implementation blocker:
+  - DB adapter
+  - PostgreSQL schema / migration runner
+  - Repository port
+  - Outbox claim / lease
+  - RDS / secret / network IaC
+  - Data migration tool / rehearsal
+- 再開条件: 上記依存Issueが完了し、staging PostgreSQL cutover rehearsalが成功すること。
 
 ## Recently Completed
+
+### #129 / PR #130（完了済み）
+
+- 優先度: P2
+- 状態: Closed / Merged / Completed
+- 完了日: 2026-08-01（日本時間）
+- 反映内容: Worker application retry / stale recoveryを選択中のHTTP / SQS queue runtimeへ統合し、runtime `enqueue()`明示注入、SQS client共有、Worker SendMessage最小権限を実装した。
 
 ### #127 / PR #128（完了済み）
 
@@ -161,17 +171,31 @@
 - 完了日: 2026-07-25
 - 反映内容: Application retryへexponential backoff + full jitterを追加した。
 
-## Next Issue Candidates
+## Follow-up Issue Candidates
 
-1. Managed DB移行・API / Worker実行トポロジー設計（P2）
-2. DLQ replay / purge運用（P2）
-3. Queue / outbox metrics backend・dashboard・alert（P2）
-4. Outbox claim / lease（P2）
-5. Durable application retry scheduling（P2）
-6. ECS task definition / workload role wiring（設計確定までBlocked）
+依存順:
+
+1. DB adapterとSQLite / PostgreSQL dual-provider contract test基盤（P2）
+2. Versioned migration runnerとPostgreSQL互換schema（P2）
+3. Submission / challenge / outbox repositoryのasync adapter移行（P2）
+4. Outbox claim / leaseと複数API instance安全化（P2）
+5. RDS PostgreSQL / Secrets Manager / security group IaC（P2）
+6. SQLite export / PostgreSQL import / validation tool（P2）
+7. API / Worker / Migrator ECS task definition / service wiring（P2）
+8. Staging cutover rehearsal / rollback drill（P2）
+9. DLQ replay / purge運用（P2）
+10. Queue / outbox metrics backend / dashboard / alert（P2）
+11. Durable application retry scheduling（P2）
+
+## Scale gate
+
+- Outbox claim / lease完了前にAPI desired countを1より増やさない。
+- DB cutoverとSQS transport切替を同じchangeへ含めない。
+- Actual AWS resourceはreview-only change setと明示承認を経る。
+- Staging rehearsal前にproduction相当cutoverを行わない。
 
 ## Branch Cleanup
 
-- PR #128のhead branch `feat/staging-oidc-change-set` は削除確認対象。
-- Issue #129 / PR #130のhead branchは `feat/worker-retry-queue-runtime`。
-- PR #130 merge後にhead branchを削除する。
+- PR #130のhead branch`feat/worker-retry-queue-runtime`は削除確認対象。
+- Issue #131 branchは`docs/managed-db-topology-design`。
+- Issue #131 merge後にhead branchを削除する。
