@@ -1,6 +1,6 @@
 # adr
 
-最終更新: 2026-07-23
+最終更新: 2026-08-01
 
 ## 目的
 このディレクトリの保管対象を定義し、情報の散逸を防ぐ。
@@ -12,6 +12,11 @@
 
 ## ADR一覧
 
+- `2026-08-01-managed-postgresql-ecs-service-topology.md`
+  - RDS for PostgreSQLへの移行、API / Worker別ECS service、Migrator task、DB role / secret / TLS / cutover境界
+  - 関連Issue: #131
+  - 詳細設計: `docs/architecture/managed-db-ecs-topology.md`
+  - 移行計画: `docs/reports/2026-08-01-sqlite-postgresql-migration-design.md`
 - `2026-07-23-queue-delivery-and-db-fencing-boundary.md`
   - queue delivery / ack / visibility / DLQとDB processing lease / attempt fencing / completion guardの責務境界
   - 関連Issue: #109
