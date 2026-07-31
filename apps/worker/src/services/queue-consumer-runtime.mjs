@@ -11,7 +11,10 @@ import {
   enqueueSubmissionAttempt,
   setDefaultSubmissionQueueProducerFactory
 } from '../../../../packages/queue/src/submission-queue.mjs';
-import { createSqsQueueProducer } from '../../../../packages/queue/src/sqs-queue-producer.mjs';
+import {
+  createSqsQueueProducer,
+  SQS_QUEUE_TYPES
+} from '../../../../packages/queue/src/sqs-queue-producer.mjs';
 import { WORKER_QUEUE_CONSUMERS } from '../config/queue-consumer-config.mjs';
 import { createSqsQueueConsumer } from './sqs-queue-consumer.mjs';
 
@@ -22,6 +25,7 @@ const defaultReceiveCommandFactory = (input) => new ReceiveMessageCommand(input)
 const defaultDeleteCommandFactory = (input) => new DeleteMessageCommand(input);
 const defaultChangeVisibilityCommandFactory = (input) => new ChangeMessageVisibilityCommand(input);
 const defaultSendCommandFactory = (input) => new SendMessageCommand(input);
+const validQueueTypes = new Set(Object.values(SQS_QUEUE_TYPES));
 
 export const createWorkerQueueConsumerRuntime = ({
   config,
@@ -81,6 +85,9 @@ export const createWorkerQueueConsumerRuntime = ({
 
   if (!config.sqs || typeof config.sqs !== 'object') {
     throw new TypeError('worker SQS consumer config is required.');
+  }
+  if (!validQueueTypes.has(config.sqs.queueType)) {
+    throw new TypeError('worker SQS queueType must be standard or fifo.');
   }
   if (typeof sqsClientFactory !== 'function') {
     throw new TypeError('worker SQS client factory is required.');
