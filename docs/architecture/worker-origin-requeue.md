@@ -8,28 +8,31 @@ Workerが生成するapplication retryとstale recoveryを、選択中のHTTP / 
 
 ## コンポーネント
 
-- `enqueueSubmissionAttempt`: version付きqueue messageを構築する共通入口
-- Default producer registration: Worker processの選択runtimeを共通入口へ接続するprocess-local registration
+- `enqueueSubmissionAttempt`: Version付きqueue messageを構築し、明示されたproducerへ渡す共通入口
+- Worker queue runtime: HTTP / SQS producerを保持し、`enqueue()` portを提供する
 - HTTP producer: Worker `POST /jobs`へmessageを送信するrollback経路
 - SQS producer: Source queueへSendMessageするAWS経路
 - SQS consumer: Source queueをlong pollingし、DB永続状態確認後にackする
-- Application retry: Infrastructure failure後にnew attemptを作成して再投入する
-- Stale recovery: Processing lease期限切れのrunning submissionをnew attemptへ回収して再投入する
+- Application retry: Infrastructure failure後にnew attemptを作成してruntime `enqueue()`へ渡す
+- Stale recovery: Processing lease期限切れのrunning submissionをnew attemptへ回収し、注入された`enqueueAttempt`へ渡す
 
-## 初期化順序
+## 初期化・依存注入
 
 1. Workerがqueue consumer configを読み込む。
 2. HTTP / SQS runtimeを作成する。
-3. Runtimeが選択transportのproducer factoryをprocess-local defaultとして登録する。
-4. Application retry / stale recoveryは既存の`enqueueSubmissionAttempt`を呼び出す。
-5. 共通入口が登録済みproducerへmessageを渡す。
-6. Worker shutdown時にregistrationをrestoreする。
-7. SQSの場合はpoll停止後にclientをdestroyする。
+3. Runtimeが選択transportのproducerを保持する。
+4. Application retryはruntime `enqueue()`を直接呼ぶ。
+5. Stale scanner起動時にruntime `enqueue()`を`enqueueAttempt`として注入する。
+6. 共通`enqueueSubmissionAttempt`が明示されたproducerへmessageを渡す。
+7. SQS shutdown時はpoll停止後にclientをdestroyする。
+
+Process-global registrationや共有可変singletonは使用しない。
 
 ## HTTP経路
 
 ```text
 application retry / stale recovery
+  -> runtime.enqueue
   -> enqueueSubmissionAttempt
   -> HTTP producer
   -> POST /jobs
@@ -44,6 +47,7 @@ application retry / stale recovery
 
 ```text
 application retry / stale recovery
+  -> runtime.enqueue
   -> enqueueSubmissionAttempt
   -> SQS producer
   -> source queue
@@ -63,7 +67,7 @@ Application retry:
 
 1. Current attemptを`retry_pending`へ条件付き更新する。
 2. New grading attempt / idempotency keyを作成する。
-3. Backoff後に選択runtimeへenqueueする。
+3. Backoff後にruntime `enqueue()`へ渡す。
 4. 成功時だけretry処理完了とする。
 5. 失敗時はnew attemptを`infra_failed`へ条件付き終端化する。
 
@@ -71,7 +75,7 @@ Stale recovery:
 
 1. Lease期限切れcandidateを取得する。
 2. Old attempt / key / lease expiryを条件にnew attemptへ回収する。
-3. 選択runtimeへenqueueする。
+3. 注入されたruntime `enqueue()`へ渡す。
 4. 失敗時はnew attemptを`infra_failed`へ条件付き終端化する。
 
 ## Correctness
@@ -126,3 +130,4 @@ Eventへraw attempt keyを記録しない。Send failureは一般化reasonとerr
 - `docs/runbooks/2026-07-31-worker-retry-queue-runtime-runbook.md`
 - `packages/queue/src/submission-queue.mjs`
 - `apps/worker/src/services/queue-consumer-runtime.mjs`
+- `apps/worker/src/services/stale-recovery-scanner.mjs`
