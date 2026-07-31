@@ -7,8 +7,8 @@
 - Issue: #129
 - PR: #130
 - Branch: `feat/worker-retry-queue-runtime`
-- Code CI: Success
-- Final docs CI: 確認対象
+- Code / docs CI: Success
+- PR状態: Ready移行対象
 - 実AWS deploy: 未実施
 - Production transport: HTTP
 
@@ -49,6 +49,22 @@ Worker-originのapplication retry / stale recoveryを、選択中のHTTP / SQS r
 - Invalid / unconfirmed deliveryをackしない
 - Hidden tests / code / credentialsをqueue messageへ含めない
 - Enqueue失敗を成功扱いにしない
+
+## CI結果
+
+Ready移行前のcode / docs headで以下が成功した。
+
+- Docs validation
+- Frozen lockfile install
+- Lint
+- Typecheck
+- Unit test
+- Integration test
+- Schema validation
+- Infra validation
+- Build
+
+Review threadは0件で、PRはmergeableである。
 
 ## ECS wiring保留理由
 
