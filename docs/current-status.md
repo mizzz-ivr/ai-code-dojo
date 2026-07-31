@@ -15,7 +15,7 @@
 - Queue message contract、HTTP / SQS producer / consumer、構造化event、application retry backoff、transactional outboxまで実装済み。
 - Issue #125 / PR #126でSQS source queue / DLQ / RedrivePolicy / workload IAM roleのCloudFormation IaCをmerge済み。
 - Issue #127 / PR #128でstaging GitHub OIDC認証とreview-only change set workflowをmerge済み。
-- Issue #129 / PR #130でWorker application retry / stale recoveryを選択中queue runtimeへ統合し、初回品質ゲート成功済み。
+- Issue #129 / PR #130でWorker application retry / stale recoveryを選択中queue runtimeへ統合し、依存注入後の品質ゲート成功済み。
 - Linearは無料Issue上限のためIssue #129を登録できず、GitHub / Repository docs / Notionを管理正本とする。
 - API直接実行禁止、hidden tests非公開、challenge version追加方式の不変条件を維持する。
 
@@ -40,13 +40,15 @@
 
 ### Worker-origin requeue（Issue #129 / PR #130）
 
-- Application retryとstale recoveryは共通`enqueueSubmissionAttempt`を利用する。
-- Worker runtime起動時にprocess-local default producerを登録する。
+- Worker runtimeは選択transportのproducerを保持し、`enqueue()` portを提供する。
+- Application retryはserverからruntime `enqueue()`を直接呼ぶ。
+- Stale recoveryはscanner起動時にruntime `enqueue()`を`enqueueAttempt`として注入する。
+- Process-global registrationや共有可変singletonは使用しない。
 - HTTP選択時は既存HTTP self-enqueueを利用する。
 - SQS選択時はconsumerとretry producerで同一SQS client / QueueUrlを共有する。
 - QueueUrl末尾`.fifo`からStandard / FIFOを判定する。
 - FIFO時は既存SQS producerのMessageGroupId / MessageDeduplicationId契約を再利用する。
-- Runtime close時はproducer登録を解除し、poll停止後にclientを1回だけdestroyする。
+- Runtime close時はpoll停止後にclientを1回だけdestroyする。
 - SendMessage失敗時は成功扱いせず、既存の`infra_failed`安全終端化を維持する。
 
 ## SQS infrastructure / IAM
@@ -94,7 +96,7 @@
 
 ## Issue #129 / PR #130のテスト状況
 
-Draft PRのcode headで以下は成功済み。
+依存注入後のcode headで以下は成功済み。
 
 - Frozen lockfile install
 - Lint
@@ -103,7 +105,6 @@ Draft PRのcode headで以下は成功済み。
 - Integration test
 - Schema validation
 - Infra validation
-- Build
 
 追加した主な回帰観点:
 
@@ -113,10 +114,11 @@ Draft PRのcode headで以下は成功済み。
 - Consumer / retry producerのclient共有。
 - Client single destroy。
 - Queue type欠落のstartup rejection。
+- Stale scannerが注入されたruntime enqueueを利用する。
 - Send失敗時のraw error非露出。
 - Worker roleのSendMessage欠落・権限拡大検知。
 
-Docs同期後のfinal headで全品質ゲートを再確認する。
+Final docs headでBuildを含む全品質ゲートを再確認する。
 
 ## 現時点の非対応・運用制約
 
@@ -156,6 +158,7 @@ Docs同期後のfinal headで全品質ゲートを再確認する。
 - Issue #129: `https://github.com/mizzz-ivr/ai-code-dojo/issues/129`
 - PR #130: `https://github.com/mizzz-ivr/ai-code-dojo/pull/130`
 - Notion #129: `https://app.notion.com/p/3ae7322f39fa81a59902f769db53cd76`
+- Architecture: `docs/architecture/worker-origin-requeue.md`
 - Runbook: `docs/runbooks/2026-07-31-worker-retry-queue-runtime-runbook.md`
 - SQS template: `infra/aws/cloudformation/sqs-queue-stack.json`
 - Worker runtime: `apps/worker/src/services/queue-consumer-runtime.mjs`
