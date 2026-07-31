@@ -27,13 +27,14 @@
 
 #### 対象
 
-- Process-local default queue producer registration / restore
+- Worker runtime `enqueue()` port
+- Application retryへのruntime enqueue明示注入
+- Stale scannerへの`enqueueAttempt`明示注入
+- Process-global registrationを使用しない責務分離
 - HTTP self-enqueue互換
 - SQS consumer / retry producerのclient共有
 - QueueUrl suffixによるStandard / FIFO判定
 - FIFO MessageGroupId / MessageDeduplicationId契約再利用
-- Application retryのselected runtime再投入
-- Stale recoveryのselected runtime再投入
 - SendMessage失敗時の既存`infra_failed`終端化
 - Worker roleへのsource queue `sqs:SendMessage`追加
 - Customer managed KMS policy例の`kms:GenerateDataKey`
@@ -58,7 +59,10 @@
 - HTTP選択時にAWS clientを生成しない。
 - HTTP retry / stale recoveryが既存`POST /jobs`を利用する。
 - SQS選択時にconsumer / retry producerが同一clientを共有する。
-- Runtime close時にproducer registrationを解除しclientを1回だけdestroyする。
+- Application retryがruntime `enqueue()`を直接利用する。
+- Stale recoveryが注入されたruntime `enqueue()`を利用する。
+- Process-global producer registrationを使用しない。
+- Runtime close時にclientを1回だけdestroyする。
 - QueueUrlからStandard / FIFOを正しく判定する。
 - FIFOで既存group / dedup contractを維持する。
 - Application retry / stale recoveryが共通queue message contractを通る。
@@ -74,13 +78,14 @@
 #### 現在の確認結果
 
 - GitHub Issue #129: Created
-- GitHub PR #130: Draft / mergeability確認中
+- GitHub PR #130: Draft / mergeable
 - Notion page: Created
 - Linear Issue: 無料Issue上限により作成失敗
 - HTTP self-enqueue test: Success
 - Standard SQS retry enqueue test: Success
 - FIFO group / dedup test: Success
 - SQS client shared / single destroy test: Success
+- Stale runtime enqueue injection test: Success
 - Send failure sanitization test: Success
 - Queue type startup validation: Success
 - Worker IAM static validation: Success
@@ -90,8 +95,7 @@
 - Integration test: Success
 - Schema validation: Success
 - Infra validation: Success
-- Build: Success
-- Final docs head CI: 確認対象
+- Final Build / docs head CI: 確認対象
 - 実AWS validation / transport切替: 未実施
 
 ## 保留Issue候補
