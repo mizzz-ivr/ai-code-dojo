@@ -26,6 +26,15 @@ test('validatorはproducer権限の拡大とwildcard resourceを拒否する', a
   assert.equal(includesError(errors, 'must not grant sqs:PurgeQueue'), true);
 });
 
+test('validatorはWorker retry用SendMessageの欠落を拒否する', async () => {
+  const template = await loadTemplate();
+  const statement = template.Resources.ConsumerRole.Properties.Policies[0].PolicyDocument.Statement[0];
+  statement.Action = statement.Action.filter((action) => action !== 'sqs:SendMessage');
+
+  const errors = validateSqsCloudFormationTemplate(template);
+  assert.equal(includesError(errors, 'ConsumerRole actions must be exactly'), true);
+});
+
 test('validatorはconsumerのDLQ read権限とsource queue以外のresourceを拒否する', async () => {
   const template = await loadTemplate();
   const statement = template.Resources.ConsumerRole.Properties.Policies[0].PolicyDocument.Statement[0];
