@@ -208,7 +208,12 @@ export const validateSqsCloudFormationTemplate = (template) => {
   validateRole({
     role: resources.ConsumerRole,
     roleName: 'ConsumerRole',
-    expectedActions: ['sqs:ReceiveMessage', 'sqs:DeleteMessage', 'sqs:ChangeMessageVisibility'],
+    expectedActions: [
+      'sqs:ReceiveMessage',
+      'sqs:DeleteMessage',
+      'sqs:ChangeMessageVisibility',
+      'sqs:SendMessage'
+    ],
     errors
   });
 
