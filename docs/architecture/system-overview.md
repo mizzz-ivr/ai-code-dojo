@@ -1,15 +1,46 @@
 # system-overview（正本）
 
-最終更新: 2026-07-31（Issue #129 Worker-origin requeue runtimeを反映）
+最終更新: 2026-08-01（Issue #131 Managed DB / ECS topology設計を反映）
 
 ## この文書の目的
 
-実装詳細に入る前に、システム境界・責務分担・データフロー・correctness境界を把握するためのアーキテクチャ概観を提供する。
+実装詳細に入る前に、現行システムの境界・責務分担・データフロー・correctness境界と、Issue #131で確定したManaged DB移行後の目標構成を把握できるようにする。
+
+設計済みの将来構成と実装済みruntimeを混同しないことを最優先とする。
+
+## 状態区分
+
+### 実装済み・現行runtime
+
+- Database: SQLite `.data/app.db`
+- API / Worker: Node.js process
+- API queue producer: HTTP / SQS切替可能、既定HTTP
+- Worker queue consumer: HTTP / SQS切替可能、既定HTTP
+- Transactional outbox
+- Processing lease / heartbeat
+- Attempt idempotency key / completion guard
+- Stale running recovery
+- Worker-origin retry / recoveryのruntime `enqueue()`統合
+- SQS source queue / DLQ / IAMのCloudFormation IaC
+- Staging OIDC review-only change set workflow
+
+### 設計確定・未実装
+
+- Amazon RDS for PostgreSQL
+- Async DatabaseClient adapter
+- Versioned migration runner
+- API / Worker別ECS service / task definition
+- One-shot DB Migrator task
+- API / Worker / Migrator別PostgreSQL role / secret
+- SQLite export / PostgreSQL import / validation tool
+- Staging cutover rehearsal
 
 ## システム境界
 
 - 学習者: Web UIから問題取得・提出・結果確認
+- Web: 学習者向け画面とAPI client
 - API: Challenge / submission / adminの公開境界、認可、submission永続化、採点依頼
+- Database: Challenge、submission、queue outbox、lease / fencing状態の正本
 - Transactional outbox: Submissionとqueue publish intentのatomic永続化、pending publish再送
 - Queue contract / port: Version付きmessage、producer / consumer共通validation、transport差し替え境界
 - API queue runtime: HTTP / SQS producer選択、legacy / outbox共通enqueue
@@ -19,8 +50,9 @@
 - Runner: Visible / hidden tests実行と結果正規化
 - DLQ: Queue delivery異常の隔離。Submission `infra_failed`とは別概念
 - Queue observability: Allowlist fieldのJSON Lines event、将来metrics / alertへ変換する監視契約
+- Migrator（将来）: Versioned schema migrationをone-shotで実行する専用主体
 
-## 高レベルデータフロー
+## 現行高レベルデータフロー
 
 1. WebがAPIからpublished challengeを取得する。
 2. WebがAPIへsubmissionを作成する。
@@ -40,6 +72,41 @@
 16. Processing lease期限切れ時はstale recoveryがnew attemptへ回収し、注入されたruntime `enqueue()`へ渡す。
 17. 未削除messageはvisibility expiry後に再配送され、RedrivePolicy上限でDLQへ移る。
 18. Webがsubmission結果をポーリング表示する。
+
+## 現行Database境界
+
+### Provider
+
+- `node:sqlite`の`DatabaseSync`を使用する。
+- DB fileはprocess working directory配下の`.data/app.db`。
+- Module-level singleton connectionを使用する。
+- Startup時にschema作成、additive column確認、legacy JSON importを行う。
+
+### SQLite固有依存
+
+- Sync `.prepare().get()` / `.all()` / `.run()`
+- `?` placeholder
+- `write.changes`
+- `PRAGMA table_info`
+- `BEGIN IMMEDIATE`
+- File path / local filesystem
+
+これらはRepositoryからasync DatabaseClient境界へ移すまで、ECSの複数task運用へ持ち込まない。
+
+### データ管理
+
+- Challenge: `challenges` + `challenge_versions`
+- Submission: `submissions`
+- Queue publish intent: `queue_outbox`
+- Submission内部制御:
+  - `grading_attempt`
+  - `attempt_idempotency_key`
+  - `completion_guard_at`
+  - `processing_claimed_at`
+  - `processing_heartbeat_at`
+  - `processing_lease_expires_at`
+
+Queue delivery state、ReceiptHandle、delivery countはsubmission tableへ保存しない。
 
 ## Queue message contract
 
@@ -219,7 +286,9 @@ Customer managed KMSを採用する場合、Worker role policy例は対象keyの
 ## Transactional outbox
 
 - Submissionと同じattemptのqueue messageを`queue_outbox`へpending保存する。
-- Submissionとoutboxを同一SQLite transactionでcommitする。
+- Submissionとoutboxを同一Database transactionでcommitする。
+- 現行SQLiteでは`BEGIN IMMEDIATE`を使用する。
+- Target PostgreSQLでは同じtransaction clientを使用する。
 - Dispatcherが選択されたAPI producer runtimeへmessageを渡す。
 - Enqueue成功時だけpublishedへ更新する。
 - Enqueue失敗時はpendingを維持する。
@@ -229,15 +298,182 @@ Customer managed KMSを採用する場合、Worker role policy例は対象keyの
 
 | 機構 | 主責務 | Correctnessへの位置付け |
 |---|---|---|
-| CloudFormation stack | Queue / IAM resourceの再現性 | 運用基盤 |
-| Transactional outbox | Publish intentのdurability | 補助 |
+| CloudFormation stack | Queue / IAM / DB resourceの再現性 | 運用基盤 |
+| Transactional outbox | Publish intentのdurability | 必須transaction境界 |
 | SQS durable message | Delivery availability | 補助 |
 | Queue visibility timeout | 一時的な再配送抑止 | 補助 |
 | DB processing lease | Current attemptの実行所有権 | 必須 |
 | Attempt idempotency key | Attempt fencing | 必須 |
 | Completion guard | Terminal保存の一意化 | 必須 |
+| Conditional UPDATE row count | Ownership /保存成功判定 | 必須 |
 
 Exactly-once publish / deliveryやFIFO deduplicationだけへ正しさを依存しない。
+
+## Managed DB目標構成（Issue #131）
+
+### Database
+
+- Amazon RDS for PostgreSQL provisioned
+- Private database subnet
+- `PubliclyAccessible=false`
+- Storage encryption
+- Automated backup / PITR
+- Deletion protection
+- Production相当はMulti-AZ
+- TLS certificate verification必須
+
+Exact PostgreSQL version、staging Multi-AZ、pool sizeは後続IaC / adapter Issueで確定する。
+
+### ECS topology
+
+```text
+ALB
+ |
+API ECS Service / API Task Role
+ |                       \
+ | PostgreSQL TLS         \ SendMessage
+ v                         v
+RDS PostgreSQL <------- Source SQS Queue
+ ^                         |
+ | PostgreSQL TLS          | Receive / Visibility / Delete
+ |                         v
+Worker ECS Service / Worker Task Role
+
+DB Migrator one-shot ECS Task
+ |
+ +--> versioned schema migration
+```
+
+API / Workerを同一taskへ同居させない。
+
+### Service responsibility
+
+API service:
+
+- Public HTTP API
+- Challenge / submission / admin
+- Submission + outbox atomic write
+- Outbox dispatch
+- Queue producer
+
+Worker service:
+
+- Queue consume
+- Submission claim / heartbeat / completion
+- Runner呼び出し
+- Retry / stale recovery
+
+Migrator task:
+
+- Versioned schema migration
+- Migration checksum検証
+- Advisory lock
+- DDL
+
+API / Worker startupでmigrationを実行しない。
+
+### AWS IAM / PostgreSQL role
+
+| 主体 | AWS task role | PostgreSQL role |
+|---|---|---|
+| API | API専用。Source queue SendMessageのみ | `dojo_api` |
+| Worker | Worker専用。Source queue Receive / Delete / Visibility / Send | `dojo_worker` |
+| Migrator | Migration実行に必要な限定権限 | `dojo_migrator` |
+
+AWS task roleとPostgreSQL roleは別の防御層として扱う。ApplicationへDB master credentialやDDL権限を渡さない。
+
+### Secret / execution role
+
+- API / Worker / Migratorで別Secrets Manager secretを使用する。
+- ECS task definitionの`secrets`から必要なkeyだけを注入する。
+- Secret取得はtask execution roleが担当する。
+- Application task roleへ不要なSecrets Manager readを付与しない。
+- Secret rotation後はrunning taskへ自動反映されないため、rolling redeployを必須とする。
+- Initial authenticationはpassword方式とし、IAM DB authenticationは別Issueで再評価する。
+
+### Network
+
+- ALBはpublic subnet。
+- API / Worker / Migratorはprivate application subnet。
+- RDSはprivate database subnet。
+- DB SGはAPI SG / Worker SG / Migrator SGからのTCP 5432だけを許可する。
+- CIDR広域許可やInternet公開を行わない。
+
+### Database adapter
+
+Repositoryからdriver固有APIを除去し、次のasync contractを利用する。
+
+- `queryOne(statement, params)`
+- `queryMany(statement, params)`
+- `execute(statement, params)`
+- `transaction(callback)`
+- `close()`
+
+Normalization:
+
+- Canonical placeholder: `$1`, `$2`, ...
+- SQLite `changes` / PostgreSQL `rowCount`: `{ rowCount }`
+- Transaction callback: 同一connection
+- Driver固有error: internal categoryへ一般化
+
+Initial migrationではORM / query builderを同時導入しない。
+
+### Schema compatibility
+
+初回cutoverでは既存application contractを維持する。
+
+- ID / slug / attempt key: text
+- JSON payload: serialized text
+- Timestamp: UTC ISO 8601 text
+- Counter: integer
+
+`uuid` / `jsonb` / `timestamptz`への変換はcutover後の別Issueとする。
+
+### PostgreSQL concurrency
+
+- Claim / heartbeat / completionは条件付きUPDATEの`rowCount = 1`だけを成功とする。
+- Stale recoveryはtransaction内でcurrent rowを`SELECT ... FOR UPDATE`する。
+- Challenge version追加はchallenge row lockまたはunique violation retryを利用する。
+- Candidate list取得だけをownership取得とみなさない。
+
+### Scale gate
+
+現行outbox dispatcherにはclaim / leaseがない。
+
+- Outbox claim / lease完了前はAPI desired countを1に固定する。
+- 複数dispatcherを有効化しない。
+- Follow-upで`FOR UPDATE SKIP LOCKED`または明示leaseを導入する。
+
+### Cutover gate
+
+初回SQLite -> PostgreSQL cutoverは短時間maintenance方式とする。
+
+1. New write停止
+2. Running処理完了
+3. API / Worker停止
+4. SQLite backup / hash
+5. Deterministic export
+6. PostgreSQL migration / import
+7. Row / invariant validation
+8. HTTP transportのままAPI / Worker起動
+9. Smoke test
+10. 承認後にwrite再開
+
+Write再開前はSQLite backupへ戻せる。Write再開後はPostgreSQLへnew dataが発生するため、SQLiteへの単純切戻しを禁止する。
+
+## ECS implementation gate
+
+Issue #131でdesign blockerは解消するが、ECS resource実装は次の依存が完了するまでBlockedとする。
+
+1. DB adapter / dual-provider contract test
+2. Versioned migration runner / PostgreSQL schema
+3. Repository async port
+4. Outbox claim / lease
+5. RDS / secret / network IaC
+6. Export / import / validation tool
+7. Staging cutover rehearsal
+
+SQLite fileをEFSで共有する案、API / Worker同一task案は採用しない。
 
 ## DLQ
 
@@ -259,6 +495,9 @@ Event contractは`packages/queue/src/queue-event-logger.mjs`を正本とする�
 - Submission ID / grading attempt
 - Correlation ID / schema version
 - Generalized error type
+- DB operation category / transaction retry count
+- Pool waiting / timeout count
+- Migration version / duration
 
 禁止field:
 
@@ -268,6 +507,7 @@ Event contractは`packages/queue/src/queue-event-logger.mjs`を正本とする�
 - Attempt idempotency key
 - QueueUrl
 - ReceiptHandle
+- DB password / full connection string
 - Raw error message
 
 Logger failureはqueue処理・採点・recoveryへ例外を伝播しない。
@@ -281,60 +521,50 @@ Logger failureはqueue処理・採点・recoveryへ例外を伝播しない。
 - Change setをexecuteしない。
 - PR CIから実AWS resourceを作成しない。
 - Production transportはHTTPのまま。
-
-## ECS deployment blocker
-
-現行DBはprocess working directory配下の固定SQLite `.data/app.db`。
-
-- API / Workerを別ECS taskへ分離するとDB fileを共有できない。
-- API / Workerを同一taskへ同居させるとtask roleが共通になり、API producer / Worker roleの最小権限分離を維持できない。
-- Managed DB移行または実行トポロジー確定前にECS task definition / service wiringを実装しない。
-- SQLite fileを複数ホストから共有する運用は前提にしない。
-
-## データ管理
-
-- Challenge: `challenges` + `challenge_versions`
-- Submission: `submissions`
-- Queue publish intent: `queue_outbox`
-- 永続化: SQLite `.data/app.db`
-- Submission内部制御:
-  - `grading_attempt`
-  - `attempt_idempotency_key`
-  - `completion_guard_at`
-  - `processing_claimed_at`
-  - `processing_heartbeat_at`
-  - `processing_lease_expires_at`
-
-Queue delivery state、ReceiptHandle、delivery countはsubmission tableへ保存しない。
+- DB cutoverとSQS transport切替を同じchange windowへ含めない。
 
 ## セキュリティ境界
 
 - Learner-safeとinternalレスポンスを分離する。
 - Hidden tests詳細はlearnerへ非公開。
 - `/api/admin/*`はadmin role必須。
-- Attempt key、lease、heartbeat、queue / outbox / DLQ stateをlearnerへ返さない。
+- Attempt key、lease、heartbeat、queue / outbox / DLQ / database stateをlearnerへ返さない。
 - QueueUrl、account ID、credential、ReceiptHandle、message bodyをRepositoryへ保存しない。
 - API本体で提出コードを直接実行しない。
 - Challenge編集はversion追加方式とする。
+- API / Worker / MigratorでAWS IAM、DB user、secretを分離する。
+- DBはprivate network / TLS検証を必須とする。
+- Submitted code / hidden testsを含むmigration artifactをpublic CIへuploadしない。
 
 ## 現時点の未対応
 
-- 実AWS OIDC bootstrap / SQS stack operation
+- PostgreSQL adapter / driver
+- Versioned migration runner / PostgreSQL schema
+- Repository async port
+- Outbox claim / lease
+- RDS / Secrets Manager / DB SG IaC
+- SQLite export / PostgreSQL import / validation tool
+- API / Worker / Migrator ECS task / service
+- Staging cutover rehearsal
+- Actual AWS OIDC bootstrap / stack operation
 - Production SQS transport切替
-- Managed DB移行
-- ECS task definition / service / cluster
-- VPC endpoint / network path
+- VPC endpoint
 - Customer managed KMS key本体
 - DLQ replay / purge
 - Metrics backend / dashboard / alert
-- Outbox claim / lease
 - Durable retry scheduling
+- RDS Proxy / IAM DB authentication
 - Production-grade Runner isolation
 
 ## 詳細文書
 
 - 現在状態: `docs/current-status.md`
 - 進行中Issue: `docs/active-issues.md`
+- Managed DB ADR: `docs/adr/2026-08-01-managed-postgresql-ecs-service-topology.md`
+- Managed DB topology: `docs/architecture/managed-db-ecs-topology.md`
+- SQLite -> PostgreSQL migration: `docs/reports/2026-08-01-sqlite-postgresql-migration-design.md`
+- Managed DB risks: `docs/risks/2026-08-01-managed-db-migration-risks.md`
+- Cutover draft: `docs/runbooks/2026-08-01-sqlite-postgresql-cutover-draft.md`
 - Worker-origin requeue: `docs/architecture/worker-origin-requeue.md`
 - Worker retry runbook: `docs/runbooks/2026-07-31-worker-retry-queue-runtime-runbook.md`
 - SQS infrastructure: `docs/runbooks/2026-07-28-sqs-cloudformation-infra-runbook.md`
