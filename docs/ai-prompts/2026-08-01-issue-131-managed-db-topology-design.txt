@@ -1,0 +1,81 @@
+# Issue #131 Managed DB / ECS topology設計prompt
+
+あなたは`mizzz-ivr/ai-code-dojo`のシニアPM・テックリード・ソフトウェアアーキテクト・レビュアーです。
+
+## 最優先ルール
+
+1. `docs/ai-protocol/PROMPT.txt`を読む。
+2. README / project-overview / current-status / active-issues / system-overviewを正本とする。
+3. APIで提出コードを直接実行しない。
+4. Hidden testsをlearnerへ返さない。
+5. Challengeはversion追加方式とする。
+6. Issue #131以外の実装変更を混在させない。
+7. PR、commit、Issue、docsは日本語とする。
+8. Branch名へ`codex`を含めない。
+
+## 管理
+
+- GitHub Issue: #131
+- Branch: `docs/managed-db-topology-design`
+- Linear: 無料Issue上限により作成不可
+- Scope: docs-only
+
+## 目的
+
+Managed DB移行方針とAPI / Worker実行トポロジーを確定し、DB adapter、RDS IaC、data migration、ECS wiringを後続Issueへ安全に分割する。
+
+## 必須判断
+
+- Target DBはRDS for PostgreSQL provisioned
+- API / Workerは別ECS service / task definition
+- Schema migrationはone-shot migrator task
+- API / Worker / MigratorでDB roleとsecretを分離
+- Secrets Manager password + TLS verify-fullを初期方式とする
+- IAM DB auth / RDS Proxyは初回対象外
+- Async DatabaseClient adapterを導入する方針
+- 初回cutoverでID / JSON / timestamp型最適化を混在させない
+- Stale recoveryはPostgreSQL row lockを使用する
+- Outbox claim / lease前はAPI desired countを1に固定する
+- Cutoverは短時間maintenance方式
+- Write再開後のSQLite単純切戻しを禁止する
+
+## 非対象
+
+- PostgreSQL driver導入
+- Repository code変更
+- Schema migration実装
+- RDS / ECS resource作成
+- Actual data migration
+- Production transport切替
+- SQS切替
+
+## Review観点
+
+- SQLite固有依存の棚卸し
+- Transactional outboxのatomicity
+- Attempt / key / lease / completion guardの維持
+- API / Worker / MigratorのIAMとDB privilege分離
+- Secret rotation / TLS / network boundary
+- Connection pool budget
+- Cutover validationとrollback checkpoint
+- Follow-up Issueの依存順
+- Diffがdocs-onlyに限定されていること
+
+## 必須文書
+
+- ADR
+- Managed DB / ECS topology
+- SQLite -> PostgreSQL migration design
+- Risk register
+- Cutover draft runbook
+- Implementation log
+- Handoff
+- Current status / active issues / system overview更新
+- Notion同期
+
+## Test
+
+- Docs validation
+- Markdown link / path確認
+- Canonical docs間の状態整合
+- Issue / PR / branch記載整合
