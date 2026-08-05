@@ -40,6 +40,7 @@
 - `submission_attempt_and_lease`
 - `queue_outbox`
 - `db:migrate --plan` / `--status`
+- SQLite接続の有限busy timeout
 - Unit / integration / schema / infra / build validation
 - Architecture / runbook / log / prompt / handoff / canonical docs
 
@@ -64,19 +65,23 @@
 - Existing SQLite schemaからattempt / lease / outbox schemaへ移行できる。
 - PostgreSQL schemaへSQLite固有構文を混入させない。
 - CLIへSQL、data、credentialsを出力しない。
+- API / Worker間の短時間SQLite write lock競合を有限待機で吸収する。
 - Production runtimeをSQLite / HTTPのまま維持する。
 - 全品質ゲートが成功する。
 
 #### 現在の確認結果
 
-- Lint: Success
-- Typecheck: Success
-- Unit test: Success
-- Integration test: Success
-- Schema validation: Success
-- Infra validation: Success
-- Build: Success
-- Docs validation: 正本反映後に再確認する。
+- 初回品質ゲート: 全成功
+- Docs追加後integration: stale recoveryで短時間SQLite write lock競合を検出
+- 修正: Runtime / plan / statusの全SQLite接続へ5秒の`busy_timeout`を設定
+- 修正後Unit test: Success
+- 修正後Integration test: Success
+- 修正後Lint: Success
+- 修正後Typecheck: Success
+- 修正後Schema validation: Success
+- 修正後Infra validation: Success
+- 修正後Docs validation: Success
+- 最新headのBuildを含む最終品質ゲートを確認中
 
 ## Blocked Issue
 
@@ -140,4 +145,5 @@
 - 実PostgreSQL contract test前にproduction DBへ切り替えない。
 - Checksum driftを手動更新や自動修復で回避しない。
 - 適用済みmigrationは変更せず、新versionを追加する。
+- SQLite busy timeout後のlock errorを成功扱いしない。
 - Actual AWS resourceはreview-only change setと明示承認を経る。
