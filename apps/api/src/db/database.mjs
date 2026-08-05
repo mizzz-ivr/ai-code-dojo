@@ -86,7 +86,7 @@ export const runMigrations = () => {
 };
 
 export const planMigrations = () => {
-  const database = openDatabase();
+  const database = new DatabaseSync(existsSync(DB_PATH) ? DB_PATH : ':memory:');
   try {
     return planSqliteMigrations({ database });
   } finally {
