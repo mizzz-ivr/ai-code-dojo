@@ -21,6 +21,7 @@
 
 - Database providerはSQLite `.data/app.db`。
 - 既存Repositoryは`node:sqlite`の`DatabaseSync`へ直接接続している。
+- API / Workerの各SQLite接続へ5秒の有限`busy_timeout`を設定し、短時間のwrite lock競合を吸収する。
 - Queue transportの既定値はAPI / WorkerともHTTP。
 - Production相当のPostgreSQL、RDS、ECS resourceは未作成。
 - APIで提出コードを直接実行せず、hidden testsをlearnerへ返さない。
@@ -87,6 +88,15 @@ SQLite / PostgreSQLで同じlogical schemaを定義し、初回移行ではID、
   - 現在のmigration状態を表示する。
 - SQL、parameters、submitted code、hidden tests、credentialsを出力しない。
 
+### CIで検出した運用差異
+
+Stale recovery integrationでAPI processとWorker processのSQLite writeが短時間競合し、busy handler未設定の接続が即座に`database is locked`で失敗した。
+
+- Runtimeとplan / statusを含む全SQLite接続へ`PRAGMA busy_timeout = 5000`を設定した。
+- 短時間lockは最大5秒待機する。
+- 長時間lockは成功扱いせず、引き続きSQLite errorとして検知する。
+- 修正後にstale recovery integrationを含む全integration testが成功した。
+
 ### 現在の境界
 
 - PostgreSQL schemaはmanifestへ追加済みだが、実`pg`接続では未実行。
@@ -116,6 +126,7 @@ SQLite / PostgreSQLで同じlogical schemaを定義し、初回移行ではID、
 - Migration checksum driftを自動修復せずfail-closedとする。
 - 適用済みmigrationを変更しない。変更は新versionとして追加する。
 - DROP TABLE / DROP COLUMN / TRUNCATEをmanifest validatorで拒否する。
+- SQLite lock待機は有限とし、timeout後の失敗を隠さない。
 
 ## 現時点の非対応
 
