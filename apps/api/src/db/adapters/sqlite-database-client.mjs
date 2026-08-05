@@ -5,6 +5,8 @@ import {
   normalizeParameters
 } from './database-client-contract.mjs';
 
+const normalizeRows = (rows) => rows.map((row) => ({ ...row }));
+
 const normalizeExecuteResult = (result) => ({
   rowCount: Number(result?.changes ?? 0),
   lastInsertId: result?.lastInsertRowid ?? null
@@ -22,7 +24,7 @@ export const createSqliteDatabaseClient = ({ database, closeDatabase = true }) =
     lifecycle.assertOpen();
     assertSql(sql);
     const values = normalizeParameters(parameters);
-    return database.prepare(sql).all(...values);
+    return normalizeRows(database.prepare(sql).all(...values));
   };
 
   const execute = async (sql, parameters = []) => {
