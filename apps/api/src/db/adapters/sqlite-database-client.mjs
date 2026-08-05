@@ -20,18 +20,34 @@ export const createSqliteDatabaseClient = ({ database, closeDatabase = true }) =
   const lifecycle = createLifecycleGuard();
   let transactionActive = false;
 
-  const query = async (sql, parameters = []) => {
+  const assertNoActiveTransaction = () => {
+    if (transactionActive) {
+      throw new Error('SQLite database transaction is active. Use the transaction client.');
+    }
+  };
+
+  const queryOnConnection = async (sql, parameters = []) => {
     lifecycle.assertOpen();
     assertSql(sql);
     const values = normalizeParameters(parameters);
     return normalizeRows(database.prepare(sql).all(...values));
   };
 
-  const execute = async (sql, parameters = []) => {
+  const executeOnConnection = async (sql, parameters = []) => {
     lifecycle.assertOpen();
     assertSql(sql);
     const values = normalizeParameters(parameters);
     return normalizeExecuteResult(database.prepare(sql).run(...values));
+  };
+
+  const query = async (sql, parameters = []) => {
+    assertNoActiveTransaction();
+    return queryOnConnection(sql, parameters);
+  };
+
+  const execute = async (sql, parameters = []) => {
+    assertNoActiveTransaction();
+    return executeOnConnection(sql, parameters);
   };
 
   const transaction = async (operation) => {
@@ -40,12 +56,15 @@ export const createSqliteDatabaseClient = ({ database, closeDatabase = true }) =
       throw new TypeError('transaction operation must be a function.');
     }
     if (transactionActive) {
-      return createTransactionClient({ query, execute }).transaction(operation);
+      return createTransactionClient({ query: queryOnConnection, execute: executeOnConnection }).transaction(operation);
     }
 
     transactionActive = true;
     database.exec('BEGIN IMMEDIATE');
-    const transactionClient = createTransactionClient({ query, execute });
+    const transactionClient = createTransactionClient({
+      query: queryOnConnection,
+      execute: executeOnConnection
+    });
 
     try {
       const result = await operation(transactionClient);
@@ -64,6 +83,7 @@ export const createSqliteDatabaseClient = ({ database, closeDatabase = true }) =
   };
 
   const close = async () => {
+    assertNoActiveTransaction();
     if (!lifecycle.close()) return;
     if (closeDatabase && typeof database.close === 'function') {
       database.close();
