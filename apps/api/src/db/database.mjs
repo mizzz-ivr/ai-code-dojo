@@ -10,11 +10,18 @@ const DATA_DIR = path.resolve(process.cwd(), '.data');
 const DB_PATH = path.join(DATA_DIR, 'app.db');
 const LEGACY_CHALLENGES_PATH = path.resolve(process.cwd(), 'apps/api/data/challenges-admin.json');
 const LEGACY_SUBMISSIONS_PATH = path.join(DATA_DIR, 'submissions.json');
+const SQLITE_BUSY_TIMEOUT_MS = 5000;
 
 let db;
 
 const ensureDataDir = () => {
   if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+};
+
+const createDatabaseConnection = (databasePath) => {
+  const database = new DatabaseSync(databasePath);
+  database.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  return database;
 };
 
 const migrateLegacyJsonIfNeeded = (database) => {
@@ -61,7 +68,7 @@ const migrateLegacyJsonIfNeeded = (database) => {
 
 const openDatabase = () => {
   ensureDataDir();
-  return new DatabaseSync(DB_PATH);
+  return createDatabaseConnection(DB_PATH);
 };
 
 export const getDb = () => {
@@ -86,7 +93,7 @@ export const runMigrations = () => {
 };
 
 export const planMigrations = () => {
-  const database = new DatabaseSync(existsSync(DB_PATH) ? DB_PATH : ':memory:');
+  const database = createDatabaseConnection(existsSync(DB_PATH) ? DB_PATH : ':memory:');
   try {
     return planSqliteMigrations({ database });
   } finally {
