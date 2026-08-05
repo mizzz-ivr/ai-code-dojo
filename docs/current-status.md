@@ -1,205 +1,105 @@
 # current-status（正本）
 
-最終更新: 2026-08-01（Issue #131 Managed DB / ECS topology設計中）
+最終更新: 2026-08-05（Issue #133 / PR #134 非同期DB adapter contractを実装中）
 
 ## この文書の目的
 
 「今どこまで実装済みか」を短時間で把握するための現況スナップショット。
 
-## 今の状態（要約）
+## 今の状態
 
 - Repositoryのcanonical full nameは`mizzz-ivr/ai-code-dojo`。
 - AI生成コードのバグ修正・機能追加を実務フローで学ぶ練習プラットフォームとしてMVP運用を継続中。
-- Docs正本は`README.md` / `docs/project-overview.md` / `docs/current-status.md` / `docs/active-issues.md` / `docs/architecture/system-overview.md`。
-- Attempt idempotency key、completion guard、processing lease / heartbeat、stale running自動回収まで実装済み。
-- Queue message contract、HTTP / SQS producer / consumer、構造化event、application retry backoff、transactional outboxまで実装済み。
-- Issue #125 / PR #126でSQS source queue / DLQ / RedrivePolicy / workload IAM roleのCloudFormation IaCをmerge済み。
-- Issue #127 / PR #128でstaging GitHub OIDC認証とreview-only change set workflowをmerge済み。
-- Issue #129 / PR #130でWorker application retry / stale recoveryを選択中queue runtimeへ統合済み。
-- Issue #131でManaged DB移行とAPI / Worker実行トポロジーをdocs-onlyで設計中。
-- Linearは無料Issue上限のためIssue #131を登録できず、GitHub Issue / Repository docs / Notionを管理正本とする。
-- API直接実行禁止、hidden tests非公開、challenge version追加方式の不変条件を維持する。
+- Attempt idempotency key、completion guard、processing lease / heartbeat、stale running自動回収を実装済み。
+- HTTP / SQS queue runtime、transactional outbox、Worker-origin retry / stale recoveryを実装済み。
+- PR #132でManaged PostgreSQL移行とAPI / Worker / MigratorのECS分離設計をmerge済み。
+- Issue #133 / PR #134でprovider非依存の非同期DB adapter contractを実装中。
+- Linearは無料Issue上限のため、Issue #133はGitHub Issue / Repository docs / Notionを管理正本とする。
 
 ## 現行runtime
 
-### Database
+- Database providerはSQLite `.data/app.db`。
+- 既存Repositoryは`node:sqlite`の`DatabaseSync`へ直接接続している。
+- Queue transportの既定値はAPI / WorkerともHTTP。
+- Production相当のPostgreSQL、RDS、ECS resourceは未作成。
+- APIで提出コードを直接実行せず、hidden testsをlearnerへ返さない。
 
-- 現行providerはSQLite。
-- Fileはprocess working directory配下の`.data/app.db`。
-- API / Workerは同じlogical databaseへアクセスする前提である。
-- `node:sqlite`の`DatabaseSync`、sync prepared statement、`BEGIN IMMEDIATE`を使用している。
-- Production相当のRDS / PostgreSQL resourceは未作成。
+## Managed DB設計（PR #132で確定）
 
-### Queue
+- Target DBはAmazon RDS for PostgreSQL provisioned。
+- API / Workerは別ECS service / task definition。
+- Schema migrationはone-shot Migrator task。
+- PostgreSQL roleとSecrets Manager secretをAPI / Worker / Migratorで分離する。
+- Initial authenticationはpassword + TLS verify-full。
+- IAM DB authentication / RDS Proxyは初回対象外。
+- Initial cutoverでは既存ID / JSON / timestampのtext表現を維持する。
+- Outbox claim / lease完了前はAPI desired countを1に固定する。
+- DB cutoverとSQS transport切替を同じchange windowへ含めない。
 
-#### API producer
+## Issue #133 / PR #134
 
-- `API_QUEUE_TRANSPORT=http|sqs`。
-- 既定値は`http`。
-- SQS選択時はtransactional outboxを必須とする。
-- API process単位で1つのSQS clientを生成し、legacy enqueueとoutbox dispatcherで共有する。
-- SQS send成功時だけoutboxをpublishedへ更新し、失敗時はpendingを維持する。
+### 実装済み範囲
 
-#### Worker consumer
+- async `DatabaseClient` contract
+  - `query`
+  - `execute`
+  - `transaction`
+  - `close`
+- SQLite `DatabaseSync` adapter
+- PostgreSQL pool / connection注入adapter境界
+- `DB_PROVIDER=sqlite|postgresql`のfail-closed validation
+- `?`からPostgreSQL positional placeholderへの変換
+- SQLite実memory DB / PostgreSQL fake poolへ同じcontract testを適用
+- transaction commit / rollback
+- nested transaction拒否
+- close冪等性 / close後操作拒否
 
-- `WORKER_QUEUE_CONSUMER=http|sqs`。
-- 既定値は`http`。
-- HTTPでは`POST /jobs`をrollback先として維持する。
-- SQSでは1件ずつlong pollingし、processing中にvisibilityをbest-effort延長する。
-- DB terminal保存、retry処理完了、安全なno-op確認後だけ最新ReceiptHandleでDeleteMessageする。
-- Invalid message、unexpected error、DB ownership喪失、保存未確認ではmessageを削除しない。
+### 重要な境界
 
-#### Worker-origin requeue
+- 新adapterは既存Repository / server startupへまだ接続していない。
+- `pg` packageと実PostgreSQL接続は未導入。
+- Production runtimeはSQLite / HTTPを維持する。
+- SQL、parameters、credentials、submitted code、hidden testsをadapterからログ出力しない。
 
-- Worker runtimeは選択transportのproducerを保持し、`enqueue()` portを提供する。
-- Application retryはserverからruntime `enqueue()`を直接呼ぶ。
-- Stale recoveryはscanner起動時にruntime `enqueue()`を`enqueueAttempt`として注入する。
-- Process-global registrationや共有可変singletonは使用しない。
-- HTTP選択時は既存HTTP self-enqueueを利用する。
-- SQS選択時はconsumerとretry producerで同一SQS client / QueueUrlを共有する。
-- QueueUrl末尾`.fifo`からStandard / FIFOを判定する。
-- FIFO時は既存SQS producerのMessageGroupId / MessageDeduplicationId契約を再利用する。
-- Runtime close時はpoll停止後にclientを1回だけdestroyする。
-- SendMessage失敗時は成功扱いせず、既存の`infra_failed`安全終端化を維持する。
+### 初回CIで検出・修正した差異
 
-## SQS infrastructure / IAM
-
-- Source queue retention 4日、long polling 20秒、visibility 90秒。
-- DLQ retention 14日、`RedriveAllowPolicy=byQueue`、`MaxReceiveCount`既定5。
-- Source / DLQでSQS-managed SSEとTLS denyを有効化する。
-- Queue削除・置換時はRetainする。
-- API producer roleはsource queueへの`sqs:SendMessage`だけを許可する。
-- Worker roleはsource queueへの以下だけを許可する。
-  - `sqs:ReceiveMessage`
-  - `sqs:DeleteMessage`
-  - `sqs:ChangeMessageVisibility`
-  - `sqs:SendMessage`
-- Wildcard resource、DLQ read、PurgeQueue、queue管理権限を付与しない。
-- Customer managed KMS policy例ではWorker retry送信用に`kms:GenerateDataKey`を含める。現行既定はSQS-managed SSE。
-
-## Deployment control plane
-
-- GitHub OIDC deployment roleとCloudFormation execution roleを分離済み。
-- OIDC trustは`aud` / `sub`完全一致でstaging Environmentへ限定する。
-- Review-only workflowはchange set作成・要約まででexecuteしない。
-- Production transportはHTTPのまま。
-- 実AWS OIDC bootstrap / SQS change set / transport切替は未実施。
-
-## Issue #131の設計判断
-
-### Target DB
-
-- Amazon RDS for PostgreSQL provisionedを採用する。
-- DBはprivate subnet、PubliclyAccessible=false、storage encryption、backup / PITR、deletion protectionを前提とする。
-- Production相当ではMulti-AZを採用する。
-- Exact PostgreSQL versionはIaC実装Issueで明示固定する。
-- 初回cutoverでは既存ID / JSON / timestampのtext表現を維持し、型最適化を別Issueへ分離する。
-
-### ECS topology
-
-- APIとWorkerを別ECS service / task definitionへ分離する。
-- API / Workerで別task role、別execution role、別security groupを使用する。
-- Schema migrationはone-shot Migrator taskだけが担当する。
-- API / Worker startupでDDLを実行しない。
-
-### DB privilege / secret
-
-- PostgreSQL roleを`dojo_api` / `dojo_worker` / `dojo_migrator`へ分離する。
-- API / Worker / Migratorで別Secrets Manager secretを使用する。
-- Initial authenticationはpassword + TLS verify-fullとする。
-- IAM DB authenticationとRDS Proxyは初回対象外とする。
-- Secret rotation後はservice redeployを必要とする。
-
-### Database adapter
-
-- Repositoryとdriverの間にasync `DatabaseClient`を導入する。
-- `queryOne` / `queryMany` / `execute` / `transaction` / `close`をcontractとする。
-- Conditional update結果はnormalized `rowCount`で判定する。
-- PostgreSQL transactionは同じclientへ固定する。
-- Stale recoveryは`SELECT ... FOR UPDATE`でcurrent rowをlockする。
-
-### Scale gate
-
-- Outbox claim / lease実装前はAPI desired countを1に固定する。
-- 複数outbox dispatcherを有効化しない。
-- DB cutoverとSQS transport切替を同じchange windowへ混在させない。
-
-### Cutover / rollback
-
-- SQLiteからPostgreSQLへの初回cutoverは短時間maintenance方式とする。
-- Write停止後にSQLite backup / export / import / invariant validationを行う。
-- Write再開前はSQLite backupへrollbackできる。
-- Write再開後はPostgreSQLに新規dataが発生するため、SQLiteへの単純切戻しを禁止する。
+SQLite query rowがnull prototype objectで返るため、PostgreSQL側のplain objectと共通contractで一致しなかった。SQLite adapterでrowをplain objectへ正規化し、provider差異をadapter内へ閉じ込めた。
 
 ## Correctness・セキュリティ境界
 
-- Queue visibility timeoutはdelivery availabilityを担う。
-- DB processing leaseはcurrent attemptの実行所有権を担う。
-- Attempt idempotency keyとcompletion guardが採点correctnessを担う。
-- Exactly-once publish / deliveryへ依存しない。
-- Transport retryでgrading attempt / attempt keyを変更しない。
 - Submissionとqueue outboxのatomic commitを維持する。
-- Queue message / eventへcode / tests / credentials / QueueUrl / ReceiptHandle / raw attempt key / raw SDK errorを記録しない。
-- Learnerへqueue / outbox / DLQ / database / delivery count / internal errorを返さない。
-- DLQとsubmission `infra_failed`を分離する。
-- HTTP producer / consumerを安全なrollback先として維持する。
-- API / Worker application roleへDDL権限を与えない。
+- Processing lease / attempt fencing / completion guardを弱めない。
+- Exactly-once queue deliveryへ依存しない。
+- Queue / DB内部状態をlearnerへ返さない。
+- Application roleへDDL権限を与えない。
+- 未対応DB providerをfail-closedで拒否する。
 
-## Issue #131の成果物
+## 現時点の非対応
 
-- ADR: `docs/adr/2026-08-01-managed-postgresql-ecs-service-topology.md`
-- Architecture: `docs/architecture/managed-db-ecs-topology.md`
-- Migration design: `docs/reports/2026-08-01-sqlite-postgresql-migration-design.md`
-- Risk register: `docs/risks/2026-08-01-managed-db-migration-risks.md`
-- Cutover draft: `docs/runbooks/2026-08-01-sqlite-postgresql-cutover-draft.md`
-- Implementation log: `docs/logs/2026-08-01-issue-131-managed-db-topology-design.md`
-- Handoff: `docs/handoff/2026-08-01-issue-131-managed-db-topology-design-handoff.md`
+- 実`pg` driver / PostgreSQL integration test
+- Versioned migration runner / PostgreSQL schema
+- Repositoryのasync adapter移行
+- Outbox claim / lease
+- RDS / Secrets Manager / security group IaC
+- SQLite export / PostgreSQL import / validation tool
+- API / Worker / Migrator ECS wiring
+- Production DB / SQS切替
 
-## 現時点の非対応・運用制約
+## 優先順位
 
-- PostgreSQL driver / adapter実装。
-- Versioned migration runner / PostgreSQL schema。
-- Repository async移行。
-- RDS / Secrets Manager / DB security group IaC。
-- Export / import / validation tool。
-- ECS task definition / service / cluster。
-- Actual AWS accountへのstack create / update / delete。
-- Production transport切替。
-- VPC endpoint / network path。
-- Customer managed KMS key / key policy本体。
-- DLQ replay / purge API・UI。
-- Queue / outbox metrics backend、dashboard、alert。
-- Outbox claim / lease。
-- Durable application retry scheduling。
-- Retained queue inventory / cleanup自動化。
-- RDS Proxy / IAM DB authentication。
-
-## 優先順位（直近）
-
-1. Issue #131のdocs review / merge。
-2. DB adapterとSQLite / PostgreSQL dual-provider contract test基盤。
-3. Versioned migration runnerとPostgreSQL互換schema。
-4. Repositoryのasync adapter移行。
-5. Outbox claim / leaseと複数API instance安全化。
-6. RDS PostgreSQL / Secrets Manager / network IaC。
-7. SQLite export / PostgreSQL import / validation tool。
-8. API / Worker / Migrator ECS wiring。
-9. Staging cutover rehearsal。
-10. 別承認でSQS transport切替。
-
-## Branch cleanup
-
-- PR #130は2026-08-01（日本時間）にmerge済み。
-- PR #130のhead branch`feat/worker-retry-queue-runtime`は削除確認対象。
-- Issue #131 branchは`docs/managed-db-topology-design`。
-- Issue #131 merge後にhead branchを削除する。
+1. Issue #133 / PR #134をレビュー・mergeする。
+2. Versioned migration runnerとPostgreSQL互換schemaを実装する。
+3. 実PostgreSQL test environmentとdriverを導入する。
+4. Repositoryをasync adapterへ段階移行する。
+5. Outbox claim / leaseを実装する。
+6. RDS / Secrets Manager / network IaCを追加する。
+7. Data migration toolとstaging cutover rehearsalを実施する。
+8. ECS wiringを追加する。
 
 ## 参照先
 
-- Issue #131: `https://github.com/mizzz-ivr/ai-code-dojo/issues/131`
-- PR #130: `https://github.com/mizzz-ivr/ai-code-dojo/pull/130`
-- ADR: `docs/adr/2026-08-01-managed-postgresql-ecs-service-topology.md`
+- Issue #133: `https://github.com/mizzz-ivr/ai-code-dojo/issues/133`
+- PR #134: `https://github.com/mizzz-ivr/ai-code-dojo/pull/134`
+- DB adapter contract: `docs/architecture/database-client-adapter-contract.md`
 - Managed DB topology: `docs/architecture/managed-db-ecs-topology.md`
-- Migration design: `docs/reports/2026-08-01-sqlite-postgresql-migration-design.md`
-- Risk register: `docs/risks/2026-08-01-managed-db-migration-risks.md`
-- Cutover draft: `docs/runbooks/2026-08-01-sqlite-postgresql-cutover-draft.md`
+- Validation runbook: `docs/runbooks/2026-08-05-database-provider-contract-validation.md`
