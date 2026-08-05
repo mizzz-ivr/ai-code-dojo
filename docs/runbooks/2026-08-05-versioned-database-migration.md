@@ -12,6 +12,7 @@ SQLite migrationのplan確認、適用、検証、異常時対応を安全に実
 - Production相当のPostgreSQL適用手順ではない。
 - DB backupが必要な環境では、適用前に`.data/app.db`を停止状態で取得する。
 - Submitted codeやhidden testsを含むDB backupを公開artifactへ保存しない。
+- Runtime / migration CLIのSQLite接続には5秒の有限`busy_timeout`を設定する。
 
 ## 事前確認
 
@@ -114,6 +115,27 @@ Applied migration history has a gap at version 2.
 - 自動適用を継続しない。
 - Backup、schema、過去deployment logを照合する。
 
+## SQLite lock競合発生時
+
+Runtime / migration CLIは短時間のwrite lockに対して最大5秒待機する。
+
+例:
+
+```text
+database is locked
+```
+
+5秒後も失敗する場合の対応:
+
+1. API / Worker / migration commandの同時書き込み状況を確認する。
+2. Migration実行中にapplication writeが継続していないか確認する。
+3. Stale recovery scannerやoutbox dispatcherの実行間隔を確認する。
+4. 同じmigration commandを並列実行していないか確認する。
+5. Lock保持processを特定し、安全に停止できる場合だけ停止する。
+6. Busy timeout値を安易に延長せず、長時間transactionの有無を調査する。
+
+Busy timeout後のerrorを成功扱いしない。Migration適用時はapplication writeを停止する運用を優先する。
+
 ## Migration失敗時
 
 Runnerはmigration単位でschema変更とhistory insertをrollbackする。
@@ -149,6 +171,7 @@ Rollback failureが発生しても、runnerは元migration errorを優先する�
 - Submitted code / hidden testsを含むDBの公開upload
 - DB migrationとSQS transport切替の同時実施
 - Production DBへの未検証PostgreSQL manifest適用
+- Busy timeoutを無限待機の代替として扱うこと
 
 ## Rollback境界
 
