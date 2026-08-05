@@ -28,6 +28,10 @@ SQLite / PostgreSQL共通のlogical schemaをversioned manifestとして管理�
   - rollback時に元例外を保持
   - existing schema introspection
   - rerun no-op
+- SQLite connection
+  - Runtime / plan / statusへ5秒の有限`busy_timeout`
+  - API / Worker間の短時間write lock競合を吸収
+  - Timeout後のlock errorは隠さない
 - CLI
   - apply
   - plan
@@ -54,9 +58,20 @@ SQLite / PostgreSQL共通のlogical schemaをversioned manifestとして管理�
 - Existing legacy submissions table migration
 - Rerun no-op
 - Failure時のschema / history rollback
+- Stale recoveryのAPI / Worker並行SQLite write
 - Existing unit / integration regression
 
-## Initial CI
+## CIで検出した問題
+
+Docs反映後のintegration runで、stale recovery scannerとtest processが同じSQLiteへ書き込んだ際、接続にbusy handlerがないため短時間lockでも即座に`database is locked`となった。
+
+### 修正
+
+- 全SQLite接続へ`PRAGMA busy_timeout = 5000`を設定した。
+- 無限待機にはせず、5秒後の失敗はSQLite errorとして維持した。
+- 修正後にstale recovery integrationを含む全integration testが成功した。
+
+## 検証結果
 
 - Lint: Success
 - Typecheck: Success
@@ -64,7 +79,8 @@ SQLite / PostgreSQL共通のlogical schemaをversioned manifestとして管理�
 - Integration test: Success
 - Schema validation: Success
 - Infra validation: Success
-- Build: Success
+- Docs validation: Success
+- Build: 最新docs headで最終確認する。
 
 ## 非対象
 
