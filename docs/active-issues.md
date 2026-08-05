@@ -81,7 +81,9 @@
 - 修正後Schema validation: Success
 - 修正後Infra validation: Success
 - 修正後Docs validation: Success
-- 最新headのBuildを含む最終品質ゲートを確認中
+- 修正後Build: Success
+- Review thread: 0件
+- PR: mergeable / Ready移行可能
 
 ## Blocked Issue
 
