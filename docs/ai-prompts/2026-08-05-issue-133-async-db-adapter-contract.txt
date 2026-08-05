@@ -1,0 +1,25 @@
+Issue #133「非同期DB adapterとSQLite・PostgreSQL共通契約テストを導入する」を実装する。
+
+目的:
+- 既存SQLite runtimeを維持したままprovider非依存のasync DatabaseClient境界を追加する。
+- SQLite実DBとPostgreSQL provider境界へ同じcontract testを適用する。
+
+必須:
+- query / execute / transaction / close
+- rowCount / lastInsertId正規化
+- SQLite null prototype rowのplain object化
+- transaction commit / rollback
+- nested transaction拒否
+- close後操作拒否
+- PostgreSQL connection固定
+- provider config fail-closed
+- SQL / parameters / credentialsをログへ出さない
+
+非対象:
+- pg package
+- 実PostgreSQL接続
+- Repository全体の移行
+- schema migration
+- AWS resource
+
+PR、commit、docsは日本語。Branch名にcodexを含めない。
