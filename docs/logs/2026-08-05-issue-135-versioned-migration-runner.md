@@ -71,8 +71,9 @@ Docs反映後のintegration runで、stale recovery scannerとtest processが同
 - 無限待機にはせず、5秒後の失敗はSQLite errorとして維持した。
 - 修正後にstale recovery integrationを含む全integration testが成功した。
 
-## 検証結果
+## 最終検証結果
 
+- Frozen lockfile install: Success
 - Lint: Success
 - Typecheck: Success
 - Unit test: Success
@@ -80,7 +81,9 @@ Docs反映後のintegration runで、stale recovery scannerとtest processが同
 - Schema validation: Success
 - Infra validation: Success
 - Docs validation: Success
-- Build: 最新docs headで最終確認する。
+- Build: Success
+- Review thread: 0件
+- PR: mergeable
 
 ## 非対象
 
