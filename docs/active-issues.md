@@ -1,6 +1,6 @@
 # active-issues（正本）
 
-最終更新: 2026-08-05（Issue #133 / PR #134を実装中）
+最終更新: 2026-08-05（Issue #135 / PR #136を実装中）
 
 ## この文書の目的
 
@@ -14,61 +14,76 @@
 
 ## 進行中Issue
 
-### #133 非同期DB adapterとSQLite・PostgreSQL共通契約テストを導入する
+### #135 Versioned migration runnerとPostgreSQL互換schemaを導入する
 
 - 優先度: P2
 - 状態: Open / In Progress
-- GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/133`
-- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/134`
-- Branch: `feat/async-db-adapter-contract`
+- GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/135`
+- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/136`
+- Branch: `feat/versioned-migration-runner`
 - Linear: 無料Issue上限により作成不可。GitHub Issue / Repository docs / Notionを管理正本とする。
 
 #### 目的
 
-既存SQLite runtimeを維持したまま、Managed PostgreSQL移行でprovider間に共通化する非同期DB contractと再利用可能なcontract testを追加する。
+既存SQLite runtimeを維持したまま、順序保証・checksum・atomicity・drift検出を備えたversioned migration runnerとPostgreSQL互換schemaを導入する。
 
 #### 対象
 
-- async `DatabaseClient`の`query` / `execute` / `transaction` / `close`
-- SQLite `DatabaseSync` adapter
-- PostgreSQL pool / connection注入adapter境界
-- `rowCount` / `lastInsertId` / row objectの正規化
-- PostgreSQL placeholder変換
-- provider selectionのfail-closed validation
-- SQLite実memory DB / PostgreSQL fake poolの共通contract test
-- commit / rollback / nested transaction / close境界
+- Version / name / provider / checksum contract
+- `schema_migrations` history table
+- 未適用migrationの昇順適用
+- Version gap / name drift / provider mismatch / checksum driftのfail-closed validation
+- SQLite migration単位transaction
+- Existing untracked SQLite schemaのbaseline化
+- SQLite / PostgreSQL provider別schema
+- `core_schema`
+- `submission_attempt_and_lease`
+- `queue_outbox`
+- `db:migrate --plan` / `--status`
+- SQLite接続の有限busy timeout
+- Unit / integration / schema / infra / build validation
 - Architecture / runbook / log / prompt / handoff / canonical docs
 
 #### 非対象
 
-- `pg` package導入
-- 実PostgreSQL接続
-- Repository全体のadapter移行
-- Versioned migration runner / PostgreSQL schema
+- `pg` packageと実PostgreSQL接続
+- PostgreSQL migration executor
+- Repository全体のasync移行
 - RDS / ECS / Secrets Manager resource
 - Data migration / production切替
+- Destructive down migration
+- JSONB / timestamptz / uuid最適化
 
 #### 完了条件
 
-- Provider固有APIを共通contract外へ漏らさない。
-- SQLite / PostgreSQLのquery rowをplain objectへ正規化する。
-- Conditional updateに利用できる`rowCount`を共通化する。
-- Transactionが同一database / connectionでcommit・rollbackされる。
-- Nested transactionとclose後操作を拒否する。
-- 未対応providerをfail-closedで拒否する。
-- 既存Repositoryとproduction runtimeを変更しない。
+- Migration versionを1からの連番として検証する。
+- SQLite / PostgreSQL両providerの定義欠落を拒否する。
+- Applied migrationのchecksum driftを適用前に拒否する。
+- Schema変更とhistory insertを同じtransactionで処理する。
+- Migration失敗時にpartial schema / historyを残さない。
+- 再実行をno-opにする。
+- Existing SQLite schemaからattempt / lease / outbox schemaへ移行できる。
+- PostgreSQL schemaへSQLite固有構文を混入させない。
+- CLIへSQL、data、credentialsを出力しない。
+- API / Worker間の短時間SQLite write lock競合を有限待機で吸収する。
+- Production runtimeをSQLite / HTTPのまま維持する。
 - 全品質ゲートが成功する。
 
 #### 現在の確認結果
 
-- Initial lint: Success
-- Initial typecheck: Success
-- Initial integration test: Success
-- Initial schema validation: Success
-- Initial infra validation: Success
-- Initial unit test: SQLite null prototype row差異を検出
-- 修正: SQLite adapterでplain objectへ正規化
-- Final CI: 再実行中
+- 初回品質ゲート: 全成功
+- Docs追加後integration: stale recoveryで短時間SQLite write lock競合を検出
+- 修正: Runtime / plan / statusの全SQLite接続へ5秒の`busy_timeout`を設定
+- 修正後Unit test: Success
+- 修正後Integration test: Success
+- 修正後Lint: Success
+- 修正後Typecheck: Success
+- 修正後Schema validation: Success
+- 修正後Infra validation: Success
+- 修正後Docs validation: Success
+- 修正後Build: Success
+- Review thread: 0件
+- PR: mergeable / Ready移行可能
 
 ## Blocked Issue
 
@@ -76,14 +91,20 @@
 
 - 状態: Blocked / Implementation dependencies required
 - 再開条件:
-  1. DB adapter contract
-  2. PostgreSQL schema / migration runner
-  3. Repository async移行
-  4. Outbox claim / lease
-  5. RDS / secret / network IaC
-  6. Data migration tool / staging rehearsal
+  1. DB adapter contract: PR #134で完了
+  2. PostgreSQL schema / migration runner: Issue #135で進行中
+  3. 実PostgreSQL test environment / executor
+  4. Repository async移行
+  5. Outbox claim / lease
+  6. RDS / secret / network IaC
+  7. Data migration tool / staging rehearsal
 
 ## Recently Completed
+
+### #133 / PR #134（完了済み）
+
+- 完了日: 2026-08-05（日本時間）
+- 反映内容: async DatabaseClient contract、SQLite adapter、PostgreSQL provider境界、共通contract test、SQLite transaction中の外側操作隔離を実装した。
 
 ### #131 / PR #132（完了済み）
 
@@ -109,20 +130,22 @@
 
 依存順:
 
-1. Versioned migration runnerとPostgreSQL互換schema（P2）
-2. 実PostgreSQL test environment / driver（P2）
-3. Submission / challenge / outbox repositoryのasync adapter移行（P2）
-4. Outbox claim / leaseと複数API instance安全化（P2）
-5. RDS PostgreSQL / Secrets Manager / security group IaC（P2）
-6. SQLite export / PostgreSQL import / validation tool（P2）
-7. API / Worker / Migrator ECS wiring（P2）
-8. Staging cutover rehearsal / rollback drill（P2）
-9. DLQ replay / purge運用（P2）
-10. Queue / outbox metrics / alert（P2）
+1. 実PostgreSQL test environment / `pg` driver / migration executor（P2）
+2. Submission / challenge / outbox repositoryのasync adapter移行（P2）
+3. Outbox claim / leaseと複数API instance安全化（P2）
+4. RDS PostgreSQL / Secrets Manager / security group IaC（P2）
+5. SQLite export / PostgreSQL import / validation tool（P2）
+6. API / Worker / Migrator ECS wiring（P2）
+7. Staging cutover rehearsal / rollback drill（P2）
+8. DLQ replay / purge運用（P2）
+9. Queue / outbox metrics / alert（P2）
 
 ## Scale gate
 
 - Outbox claim / lease完了前にAPI desired countを1より増やさない。
 - DB cutoverとSQS transport切替を同じchangeへ含めない。
 - 実PostgreSQL contract test前にproduction DBへ切り替えない。
+- Checksum driftを手動更新や自動修復で回避しない。
+- 適用済みmigrationは変更せず、新versionを追加する。
+- SQLite busy timeout後のlock errorを成功扱いしない。
 - Actual AWS resourceはreview-only change setと明示承認を経る。

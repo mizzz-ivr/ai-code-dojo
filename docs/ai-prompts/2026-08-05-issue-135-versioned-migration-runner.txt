@@ -1,0 +1,49 @@
+目的:
+既存SQLite runtimeを維持したまま、Versioned migration runnerとPostgreSQL互換schemaを実装する。
+
+前提:
+- PR #132のManaged PostgreSQL / ECS topology設計を尊重する。
+- PR #134のasync DatabaseClient contractを尊重する。
+- API / Worker startupで将来的にDDLを実行しない構成へ移行する。
+- 現行RepositoryはDatabaseSyncへ直接依存しているため、本IssueではRepository async移行を行わない。
+
+必須要件:
+- Migration versionは1からの連番。
+- SQLite / PostgreSQL両providerのschema定義を持つ。
+- Canonical manifestからSHA-256 checksumを計算する。
+- schema_migrationsへversion / name / provider / checksum / applied_atを記録する。
+- Version gap、name drift、provider mismatch、checksum driftを適用前に拒否する。
+- Migration単位transactionでschema変更とhistory insertを原子的に処理する。
+- Existing untracked SQLite schemaを安全にbaseline化する。
+- Rerunをno-opにする。
+- Failure時にpartial schema / historyを残さない。
+- plan / status CLIを追加する。
+- PostgreSQL SQLへPRAGMA、BEGIN IMMEDIATE、INSERT OR、AUTOINCREMENT、? placeholderを含めない。
+- DROP TABLE / DROP COLUMN / TRUNCATEを拒否する。
+- SQL、parameters、credentials、submitted code、hidden testsをログ出力しない。
+
+Schema versions:
+1. core_schema
+2. submission_attempt_and_lease
+3. queue_outbox
+
+非対象:
+- pg package
+- Actual PostgreSQL connection
+- Repository全体のasync移行
+- RDS / ECS
+- Data migration / production cutover
+- Destructive down migration
+- JSONB / timestamptz / uuid最適化
+
+テスト:
+- 正常系: fresh apply、existing DB baseline、rerun no-op、plan/status
+- 異常系: gap、duplicate name、provider missing/mismatch、checksum drift、migration SQL failure
+- Atomicity: partial schemaとhistoryがrollbackされること
+- Regression: unit / integration / schema / infra / build
+
+管理:
+- Issue #135
+- Branch feat/versioned-migration-runner
+- PR / commit / docsは日本語
+- Branch名にcodexを含めない
