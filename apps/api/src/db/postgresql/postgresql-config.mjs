@@ -37,6 +37,9 @@ const parseConnectionUrl = (value) => {
   if (!url.username || !url.password || !url.hostname || url.pathname === '/' || url.pathname === '') {
     throw new Error('POSTGRESQL_DATABASE_URL must include username, password, host, and database name.');
   }
+  if (url.search || url.hash) {
+    throw new Error('POSTGRESQL_DATABASE_URL must not include query parameters or a fragment.');
+  }
 
   return url;
 };
@@ -76,6 +79,18 @@ export const loadPostgresqlConfig = (environment = process.env) => {
     min: 0,
     max: 60000
   });
+  const statementTimeoutMillis = parseInteger(environment.POSTGRESQL_STATEMENT_TIMEOUT_MS, {
+    field: 'POSTGRESQL_STATEMENT_TIMEOUT_MS',
+    defaultValue: 60000,
+    min: 100,
+    max: 600000
+  });
+  const lockTimeoutMillis = parseInteger(environment.POSTGRESQL_LOCK_TIMEOUT_MS, {
+    field: 'POSTGRESQL_LOCK_TIMEOUT_MS',
+    defaultValue: 5000,
+    min: 100,
+    max: 60000
+  });
 
   return Object.freeze({
     connectionString,
@@ -87,6 +102,8 @@ export const loadPostgresqlConfig = (environment = process.env) => {
       max: poolMax,
       connectionTimeoutMillis,
       idleTimeoutMillis,
+      statement_timeout: statementTimeoutMillis,
+      lock_timeout: lockTimeoutMillis,
       options: `-c search_path=${schema}`,
       ssl: sslMode === 'verify-full'
         ? Object.freeze({ rejectUnauthorized: true })
