@@ -1,6 +1,6 @@
 # active-issues（正本）
 
-最終更新: 2026-08-06（Issue #137 / PR #138を実装中）
+最終更新: 2026-08-06（Issue #137 / PR #138をレビュー可能状態へ整備）
 
 ## この文書の目的
 
@@ -17,7 +17,7 @@
 ### #137 実PostgreSQLテスト環境・pg driver・migration executorを導入する
 
 - 優先度: P2
-- 状態: Open / In Progress
+- 状態: Open / Ready for review
 - GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/137`
 - GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/138`
 - Branch: `feat/postgresql-migration-executor`
@@ -32,12 +32,17 @@ Versioned migration manifestを実PostgreSQL上で適用・検証し、Repositor
 - `pg` 8.22.0固定
 - PostgreSQL 18.4固定
 - PostgreSQL接続設定のfail-closed validation
+- URL query parameter / fragment拒否
+- TLS `verify-full`既定
+- Statement / lock timeoutの有限化
 - PostgreSQL migration plan / status / apply
 - 専用connectionとsearch path固定
 - 非待機advisory lockによる同時Migrator拒否
 - Migration単位transaction
+- 初回history tableをMigration 1 transactionへ包含
 - DDLとhistory INSERTのatomicity
-- Checksum drift / provider mismatch / history gap拒否
+- Rollback / unlock失敗時のconnection破棄
+- Safe CLI failure JSON
 - GitHub Actions PostgreSQL service container
 - 実PostgreSQL DatabaseClient contract test
 - 実PostgreSQL migration integration test
@@ -58,9 +63,13 @@ Versioned migration manifestを実PostgreSQL上で適用・検証し、Repositor
 - PostgreSQL 18.4でmigration 1〜3を適用できる。
 - 再実行をno-opにする。
 - Migration失敗時にpartial schema / historyを残さない。
+- 初回Migration 1失敗時にbootstrap history tableを残さない。
 - Checksum driftと同時Migratorを適用前に拒否する。
 - 実PostgreSQL上でDatabaseClient共通contractを満たす。
-- CLIへSQL、parameters、credentials、submitted code、hidden testsを出力しない。
+- URLからTLS設定を上書きできない。
+- SQL待機とlock待機を有限化する。
+- Unlock / rollback失敗connectionをpoolへ戻さない。
+- CLIへSQL、parameters、credentials、submitted code、hidden tests、raw causeを出力しない。
 - Production runtimeをSQLite / HTTPのまま維持する。
 - 全品質ゲートが成功する。
 
@@ -76,7 +85,10 @@ Versioned migration manifestを実PostgreSQL上で適用・検証し、Repositor
 - Schema validation: Success
 - Infra validation: Success
 - Build: Success
-- PR: mergeable / Ready移行可能
+- PR: Ready for review / mergeable
+- Inline review thread: 0件
+- 自動Codex review: 利用上限のため未実行
+- Manual self-review: 完了、5件の安全改善を反映済み
 
 ## Blocked Issue
 
@@ -86,7 +98,7 @@ Versioned migration manifestを実PostgreSQL上で適用・検証し、Repositor
 - 再開条件:
   1. DB adapter contract: PR #134で完了
   2. Versioned schema / SQLite runner: PR #136で完了
-  3. 実PostgreSQL test / executor: Issue #137で進行中
+  3. 実PostgreSQL test / executor: Issue #137でレビュー中
   4. Repository async移行
   5. Outbox claim / lease
   6. RDS / secret / network IaC
@@ -118,14 +130,16 @@ Versioned migration manifestを実PostgreSQL上で適用・検証し、Repositor
 
 依存順:
 
-1. Submission / challenge / outbox Repositoryのasync DatabaseClient移行（P2）
-2. Outbox claim / leaseと複数API instance安全化（P2）
-3. RDS PostgreSQL / Secrets Manager / security group IaC（P2）
-4. SQLite export / PostgreSQL import / validation tool（P2）
-5. API / Worker / Migrator ECS wiring（P2）
-6. Staging cutover rehearsal / rollback drill（P2）
-7. DLQ replay / purge運用（P2）
-8. Queue / outbox metrics / alert（P2）
+1. Challenge Repositoryのasync DatabaseClient移行（P2）
+2. Submission read / simple writeのasync移行（P2）
+3. Submission processing lease / attempt fencingのasync移行（P2）
+4. Submission + queue outbox atomic transactionのasync移行（P2）
+5. API / Worker composition rootのprovider切替（P2）
+6. Outbox claim / leaseと複数API instance安全化（P2）
+7. RDS PostgreSQL / Secrets Manager / security group IaC（P2）
+8. SQLite export / PostgreSQL import / validation tool（P2）
+9. API / Worker / Migrator ECS wiring（P2）
+10. Staging cutover rehearsal / rollback drill（P2）
 
 ## Scale gate
 
@@ -136,4 +150,6 @@ Versioned migration manifestを実PostgreSQL上で適用・検証し、Repositor
 - 適用済みmigrationは変更せず、新versionを追加する。
 - 同時Migratorを待機・並行実行させない。
 - Application roleへDDL権限を付与しない。
+- Connection URL query parameterでTLS設定を上書きさせない。
+- Raw database errorを公開CLI logへ出力しない。
 - Actual AWS resourceはreview-only change setと明示承認を経る。
