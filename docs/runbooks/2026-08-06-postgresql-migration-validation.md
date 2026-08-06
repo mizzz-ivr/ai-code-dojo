@@ -23,12 +23,16 @@ POSTGRESQL_SCHEMA=public
 POSTGRESQL_SSL_MODE=verify-full
 ```
 
+`POSTGRESQL_DATABASE_URL`へquery parameterやfragmentを含めない。TLS設定は`POSTGRESQL_SSL_MODE`で管理する。
+
 Optional:
 
 ```bash
 POSTGRESQL_POOL_MAX=4
 POSTGRESQL_CONNECTION_TIMEOUT_MS=5000
 POSTGRESQL_IDLE_TIMEOUT_MS=1000
+POSTGRESQL_STATEMENT_TIMEOUT_MS=60000
+POSTGRESQL_LOCK_TIMEOUT_MS=5000
 ```
 
 `POSTGRESQL_SSL_MODE=disable`はlocalhostまたはtest環境だけで使用する。
@@ -41,7 +45,8 @@ POSTGRESQL_IDLE_TIMEOUT_MS=1000
 4. Application userにDDL権限がないことを確認する。
 5. Backup / restore pointを確認する。
 6. 別Migrator taskが実行中でないことを確認する。
-7. `pnpm install --frozen-lockfile`を実行する。
+7. Statement / lock timeoutが対象migrationの規模に対して妥当であることを確認する。
+8. `pnpm install --frozen-lockfile`を実行する。
 
 ## Plan
 
@@ -79,6 +84,32 @@ DB_PROVIDER=postgresql pnpm db:migrate
 - `pending`が空。
 - Applied version / nameが期待値と一致。
 - SQLやcredentialがstdout / stderrへ出ていない。
+
+初回Migration 1では`schema_migrations`作成も同じtransactionへ含まれる。Migration 1失敗時はhistory tableだけを残さない。
+
+## 失敗時のCLI出力
+
+失敗時はallowlist fieldだけをJSON出力する。
+
+```json
+{
+  "event": "db.migration.failed",
+  "provider": "postgresql",
+  "mode": "apply",
+  "errorType": "Error"
+}
+```
+
+出力しない情報:
+
+- Error message
+- Stack trace
+- Error cause
+- Connection URL / host / password
+- SQL / parameters
+- Submitted code / hidden tests
+
+詳細調査は権限を制限した内部ログとdatabase metadataで行い、公開Issueへraw errorを貼らない。
 
 ## 適用後確認
 
@@ -129,6 +160,8 @@ CI / local test credentialをProductionへ流用しない。
 4. DB sessionを強制終了する場合は運用承認を得る。
 5. Lock解消後にplanからやり直す。
 
+Unlockに失敗したconnectionはpoolへ戻さず破棄される。
+
 ### Checksum drift
 
 対応:
@@ -151,16 +184,27 @@ Runnerは対象migrationのDDLとhistory INSERTをrollbackする。
 
 対応:
 
-1. Errorのmigration version / nameを確認する。
+1. Errorのmigration version / nameを内部traceから確認する。
 2. Raw errorに機微情報が含まれる可能性があるため公開Issueへ貼らない。
 3. Schemaにpartial objectが残っていないことを確認する。
-4. Migration SQLを修正する。
-5. 実PostgreSQL integration testを追加・更新する。
-6. Review後にplanから再実行する。
+4. 初回失敗では`schema_migrations`も残っていないことを確認する。
+5. Migration SQLを修正する。
+6. 実PostgreSQL integration testを追加・更新する。
+7. Review後にplanから再実行する。
+
+Rollbackに失敗したconnectionはpoolへ戻さず破棄される。
+
+### Statement / lock timeout
+
+- Timeoutを成功扱いしない。
+- 長時間transactionやblocking sessionを調査する。
+- 安易に上限を無制限化しない。
+- 上限変更は対象migrationのrehearsal結果と運用承認に基づく。
 
 ### TLS / certificate failure
 
 - `rejectUnauthorized`を無効化して回避しない。
+- Connection URLへ`sslmode=disable`を追加して回避しない。
 - Hostname、CA bundle、RDS endpoint、network pathを確認する。
 - Productionで`disable`へ切り替えない。
 
@@ -178,5 +222,7 @@ Runnerは対象migrationのDDLとhistory INSERTをrollbackする。
 - 複数Migratorの並行起動
 - Application roleによるmigration
 - TLS verification無効化によるProduction接続
-- Credential / SQL / dataの公開ログ出力
+- URL query parameterによるTLS設定上書き
+- Statement / lock timeoutの無制限化
+- Credential / SQL / data / raw causeの公開ログ出力
 - DB cutoverとSQS transport切替の同時実施
