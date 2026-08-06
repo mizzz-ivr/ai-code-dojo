@@ -124,13 +124,14 @@ export const runPostgresqlMigrations = async ({
   const connection = await pool.connect();
   assertConnection(connection);
   let lockAcquired = false;
+  let destroyConnection = false;
 
   try {
     await setSearchPath(connection, schema);
     await acquireMigrationLock(connection);
     lockAcquired = true;
 
-    await connection.query(POSTGRESQL_MIGRATION_TABLE_SQL);
+    let migrationTableReady = await migrationTableExists(connection);
     const plan = await buildPlanWithConnection({ connection, migrations });
     const appliedNow = [];
 
@@ -140,6 +141,10 @@ export const runPostgresqlMigrations = async ({
 
       await connection.query('BEGIN');
       try {
+        if (!migrationTableReady) {
+          await connection.query(POSTGRESQL_MIGRATION_TABLE_SQL);
+        }
+
         for (const step of migration.providers.postgresql.steps) {
           if (step.type !== 'sql') {
             throw new Error(`Unsupported PostgreSQL migration step '${step.type}'.`);
@@ -163,11 +168,13 @@ export const runPostgresqlMigrations = async ({
           appliedAt
         ]);
         await connection.query('COMMIT');
+        migrationTableReady = true;
         appliedNow.push(toSafeMigrationSummary(migration));
       } catch (error) {
         try {
           await connection.query('ROLLBACK');
         } catch {
+          destroyConnection = true;
           // Rollback failure must not hide the migration failure.
         }
         throw new Error(`Migration ${migration.version} '${migration.name}' failed.`, {
@@ -188,9 +195,9 @@ export const runPostgresqlMigrations = async ({
       try {
         await releaseMigrationLock(connection);
       } catch {
-        // Connection release still takes priority; session locks are released on disconnect.
+        destroyConnection = true;
       }
     }
-    connection.release();
+    connection.release(destroyConnection);
   }
 };
