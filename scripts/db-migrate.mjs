@@ -1,27 +1,28 @@
 import { loadDatabaseProvider } from '../apps/api/src/db/adapters/database-client-factory.mjs';
 
-const args = process.argv.slice(2);
 const supportedArgs = new Set(['--plan', '--status']);
-const unsupportedArgs = args.filter((arg) => !supportedArgs.has(arg));
 
-if (unsupportedArgs.length > 0 || args.length > 1) {
-  throw new Error('Usage: pnpm db:migrate [--plan|--status]');
-}
+const resolveMode = (args) => {
+  const unsupportedArgs = args.filter((arg) => !supportedArgs.has(arg));
+  if (unsupportedArgs.length > 0 || args.length > 1) {
+    throw new Error('Usage: pnpm db:migrate [--plan|--status]');
+  }
 
-const mode = args[0] === '--plan'
-  ? 'plan'
-  : args[0] === '--status'
-    ? 'status'
-    : 'apply';
+  return args[0] === '--plan'
+    ? 'plan'
+    : args[0] === '--status'
+      ? 'status'
+      : 'apply';
+};
 
-const toSafeResult = (plan) => ({
+const toSafeResult = (plan, mode) => ({
   event: `db.migration.${mode}`,
   provider: plan.provider,
   applied: plan.applied.map(({ version, name }) => ({ version, name })),
   pending: plan.pending.map(({ version, name }) => ({ version, name }))
 });
 
-const runSqlite = async () => {
+const runSqlite = async (mode) => {
   const {
     planMigrations,
     runMigrations
@@ -33,7 +34,7 @@ const runSqlite = async () => {
   return planMigrations();
 };
 
-const runPostgresql = async () => {
+const runPostgresql = async (mode) => {
   const {
     createPostgresqlPool,
     loadPostgresqlConfig
@@ -61,9 +62,25 @@ const runPostgresql = async () => {
   }
 };
 
-const provider = loadDatabaseProvider();
-const plan = provider === 'sqlite'
-  ? await runSqlite()
-  : await runPostgresql();
+let provider = 'unknown';
+let mode = 'unknown';
 
-console.log(JSON.stringify(toSafeResult(plan)));
+try {
+  mode = resolveMode(process.argv.slice(2));
+  provider = loadDatabaseProvider();
+  const plan = provider === 'sqlite'
+    ? await runSqlite(mode)
+    : await runPostgresql(mode);
+
+  console.log(JSON.stringify(toSafeResult(plan, mode)));
+} catch (error) {
+  console.error(JSON.stringify({
+    event: 'db.migration.failed',
+    provider,
+    mode,
+    errorType: typeof error?.name === 'string' && error.name
+      ? error.name
+      : 'Error'
+  }));
+  process.exitCode = 1;
+}
