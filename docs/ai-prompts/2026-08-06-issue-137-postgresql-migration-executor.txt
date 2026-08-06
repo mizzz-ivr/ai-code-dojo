@@ -1,0 +1,45 @@
+あなたはai-code-dojoのシニアテックリードとして、Issue #137「実PostgreSQLテスト環境・pg driver・migration executorを導入する」を実装してください。
+
+目的:
+Versioned migration manifestを実PostgreSQL上で適用・検証し、Repositoryの段階移行前にschema・transaction・drift検出を実DBで保証する。
+
+必須要件:
+- pg driverをversion固定で導入する
+- PostgreSQL major/minorをCIで固定する
+- Connection URL、SSL mode、schema、pool設定をfail-closedで検証する
+- Production既定TLSはverify-fullとする
+- SSL disableはlocalhostまたはtest環境だけ許可する
+- PostgreSQL migration executorを実装する
+- 専用connectionと検証済みsearch pathを使用する
+- pg_try_advisory_lockで同時Migratorを待機せず拒否する
+- Migration単位transactionでDDLとschema_migrations INSERTをatomic commitする
+- Rollback failureで元migration errorを隠さない
+- plan / statusをread-onlyにする
+- DB_PROVIDER=postgresqlで既存db:migrate CLIを利用可能にする
+- CLIへSQL、parameters、credentials、submitted code、hidden testsを出力しない
+- GitHub Actions PostgreSQL service containerを追加する
+- 実PostgreSQLへDatabaseClient共通contractを適用する
+- Migration apply / rerun / rollback / drift / advisory lockをintegration testする
+- Production runtimeはSQLite / HTTPのまま維持する
+
+非対象:
+- Repository全体のPostgreSQL切替
+- RDS / ECS / Secrets Manager resource
+- Data migration / production cutover
+- JSONB / timestamptz / UUID最適化
+- Application roleへのDDL権限付与
+
+実装ルール:
+- 既存責務分離と命名を尊重する
+- 無関係なリファクタリングを混ぜない
+- 適用済みmigrationを変更しない
+- Branch名にcodexを含めない
+- PR、commit、docsは日本語
+- Architecture、runbook、implementation log、handoff、canonical docsを更新する
+
+テスト観点:
+- 正常系: migration 1〜3、rerun no-op、plan / status、DatabaseClient contract
+- 異常系: URL / SSL / schema / pool設定不正、SQL失敗、checksum drift、同時Migrator
+- Atomicity: failure時にpartial schema / historyが残らない
+- Security: credential / SQL / code / hidden tests非出力
+- Regression: SQLite / HTTP runtimeと既存unit / integrationを維持
