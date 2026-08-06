@@ -6,7 +6,7 @@ import {
   validateMigrationManifest
 } from '../../apps/api/src/db/migrations/migration-contract.mjs';
 import { migrationManifest } from '../../apps/api/src/db/migrations/migration-manifest.mjs';
-import { POSTGRESQL_MIGRATION_TABLE_SQL } from '../../apps/api/src/db/migrations/sqlite-migration-runner.mjs';
+import { POSTGRESQL_MIGRATION_TABLE_SQL } from '../../apps/api/src/db/migrations/migration-table-sql.mjs';
 
 test('migration manifestはSQLite・PostgreSQLの連番schemaを満たす', () => {
   assert.equal(validateMigrationManifest(migrationManifest), migrationManifest);
