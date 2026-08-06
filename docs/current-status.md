@@ -78,15 +78,15 @@
 
 ### 現在の確認結果
 
+- Docs validation: Success
 - Frozen lockfile install: Success
 - Lint: Success
 - Typecheck: Success
 - Unit test: Success
+- 実PostgreSQL integration test: Success
 - Schema validation: Success
 - Infra validation: Success
-- 実PostgreSQL integration test: Success
-- Docs validation: Success
-- Buildを含む最終headの品質ゲートはPR Ready移行前に再確認する。
+- Build: Success
 
 ### 現在の境界
 
