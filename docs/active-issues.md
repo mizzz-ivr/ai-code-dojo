@@ -66,16 +66,17 @@ Versioned migration manifestを実PostgreSQL上で適用・検証し、Repositor
 
 #### 現在の確認結果
 
+- Docs validation: Success
 - Frozen lockfile install: Success
 - Lint: Success
 - Typecheck: Success
 - Unit test: Success
-- Schema validation: Success
-- Infra validation: Success
 - PostgreSQL 18.4 service initialization: Success
 - 実PostgreSQL integration test: Success
-- Docs validation: Success
-- 最終docs反映後に全品質ゲートを再確認する。
+- Schema validation: Success
+- Infra validation: Success
+- Build: Success
+- PR: mergeable / Ready移行可能
 
 ## Blocked Issue
 
