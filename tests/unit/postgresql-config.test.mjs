@@ -26,6 +26,21 @@ test('PostgreSQL configはprotocolと必須URL要素を検証する', () => {
   );
 });
 
+test('Connection URLのquery parameterとfragmentを拒否する', () => {
+  assert.throws(
+    () => loadPostgresqlConfig({
+      POSTGRESQL_DATABASE_URL: `${REMOTE_URL}?sslmode=disable`
+    }),
+    /must not include query parameters or a fragment/
+  );
+  assert.throws(
+    () => loadPostgresqlConfig({
+      POSTGRESQL_DATABASE_URL: `${REMOTE_URL}#override`
+    }),
+    /must not include query parameters or a fragment/
+  );
+});
+
 test('PostgreSQL configは既定でverify-fullとpublic schemaを使用する', () => {
   const config = loadPostgresqlConfig({
     POSTGRESQL_DATABASE_URL: REMOTE_URL
@@ -35,6 +50,8 @@ test('PostgreSQL configは既定でverify-fullとpublic schemaを使用する', 
   assert.equal(config.sslMode, 'verify-full');
   assert.deepEqual(config.poolOptions.ssl, { rejectUnauthorized: true });
   assert.equal(config.poolOptions.max, 4);
+  assert.equal(config.poolOptions.statement_timeout, 60000);
+  assert.equal(config.poolOptions.lock_timeout, 5000);
   assert.equal(config.poolOptions.options, '-c search_path=public');
 });
 
@@ -83,6 +100,20 @@ test('schemaとpool設定をfail-closedで検証する', () => {
     }),
     /POSTGRESQL_CONNECTION_TIMEOUT_MS/
   );
+  assert.throws(
+    () => loadPostgresqlConfig({
+      POSTGRESQL_DATABASE_URL: LOCAL_URL,
+      POSTGRESQL_STATEMENT_TIMEOUT_MS: '99'
+    }),
+    /POSTGRESQL_STATEMENT_TIMEOUT_MS/
+  );
+  assert.throws(
+    () => loadPostgresqlConfig({
+      POSTGRESQL_DATABASE_URL: LOCAL_URL,
+      POSTGRESQL_LOCK_TIMEOUT_MS: '60001'
+    }),
+    /POSTGRESQL_LOCK_TIMEOUT_MS/
+  );
 });
 
 test('pool生成へ検証済みoptionだけを渡す', async () => {
@@ -97,13 +128,17 @@ test('pool生成へ検証済みoptionだけを渡す', async () => {
     POSTGRESQL_DATABASE_URL: LOCAL_URL,
     POSTGRESQL_SSL_MODE: 'disable',
     POSTGRESQL_SCHEMA: 'contract_test',
-    POSTGRESQL_POOL_MAX: '2'
+    POSTGRESQL_POOL_MAX: '2',
+    POSTGRESQL_STATEMENT_TIMEOUT_MS: '120000',
+    POSTGRESQL_LOCK_TIMEOUT_MS: '10000'
   });
   const pool = await createPostgresqlPool({ config, PoolClass: FakePool });
 
   assert.ok(pool instanceof FakePool);
   assert.equal(captured.connectionString, LOCAL_URL);
   assert.equal(captured.max, 2);
+  assert.equal(captured.statement_timeout, 120000);
+  assert.equal(captured.lock_timeout, 10000);
   assert.equal(captured.options, '-c search_path=contract_test');
   assert.equal(captured.ssl, false);
 });
