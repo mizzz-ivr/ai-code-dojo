@@ -3,31 +3,17 @@ name: app-quality
 on:
   pull_request:
 
-permissions:
-  contents: write
-
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: feat/postgresql-migration-executor
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --no-frozen-lockfile
-      - name: Commit generated lockfile
-        run: |
-          if ! git diff --quiet -- pnpm-lock.yaml; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add pnpm-lock.yaml
-            git commit -m "pg依存のlockfileを更新"
-            git push origin HEAD:feat/postgresql-migration-executor
-          fi
+      - run: pnpm install --frozen-lockfile
       - run: pnpm lint
 
   typecheck:
@@ -56,6 +42,24 @@ jobs:
 
   integration-test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18.4-bookworm
+        env:
+          POSTGRES_USER: dojo
+          POSTGRES_PASSWORD: dojo_test_password
+          POSTGRES_DB: dojo_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dojo -d dojo_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      NODE_ENV: test
+      POSTGRESQL_TEST_DATABASE_URL: postgresql://dojo:dojo_test_password@127.0.0.1:5432/dojo_test
+      POSTGRESQL_SSL_MODE: disable
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
