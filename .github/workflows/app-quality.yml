@@ -3,22 +3,31 @@ name: app-quality
 on:
   pull_request:
 
+permissions:
+  contents: write
+
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: feat/postgresql-migration-executor
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --no-frozen-lockfile
-      - name: Output generated lockfile
+      - name: Commit generated lockfile
         run: |
-          echo '---BEGIN PNPM LOCK---'
-          cat pnpm-lock.yaml
-          echo '---END PNPM LOCK---'
+          if ! git diff --quiet -- pnpm-lock.yaml; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add pnpm-lock.yaml
+            git commit -m "pg依存のlockfileを更新"
+            git push origin HEAD:feat/postgresql-migration-executor
+          fi
       - run: pnpm lint
 
   typecheck:
