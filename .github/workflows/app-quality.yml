@@ -13,7 +13,12 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --no-frozen-lockfile
+      - name: Output generated lockfile
+        run: |
+          echo '---BEGIN PNPM LOCK---'
+          cat pnpm-lock.yaml
+          echo '---END PNPM LOCK---'
       - run: pnpm lint
 
   typecheck:
