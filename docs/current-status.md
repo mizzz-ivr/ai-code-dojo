@@ -1,6 +1,6 @@
 # current-status（正本）
 
-最終更新: 2026-08-06（Issue #137 / PR #138 実PostgreSQL migration executorを実装中）
+最終更新: 2026-08-06（Issue #137 / PR #138 実PostgreSQL migration executorをレビュー可能状態へ整備）
 
 ## この文書の目的
 
@@ -15,7 +15,7 @@
 - PR #132でManaged PostgreSQL移行とAPI / Worker / MigratorのECS分離設計をmerge済み。
 - PR #134でprovider非依存の非同期DB adapter contractをmerge済み。
 - PR #136でversioned migration runnerとSQLite / PostgreSQL共通logical schemaをmerge済み。
-- Issue #137 / PR #138で実PostgreSQL migration executor、`pg` driver、実DB integration testを実装中。
+- Issue #137 / PR #138で実PostgreSQL migration executor、`pg` driver、実DB integration testを実装済み。PRはReady for review。
 - Linearは無料Issue上限のため、Issue #137はGitHub Issue / Repository docs / Notionを管理正本とする。
 
 ## 現行runtime
@@ -50,31 +50,52 @@
 - PostgreSQL接続設定をfail-closedで検証。
   - `POSTGRESQL_DATABASE_URL`必須
   - username / password / host / database必須
+  - URL query parameter / fragmentを拒否
   - 既定TLSは`verify-full`
   - `disable`はlocalhostまたはtest環境だけ許可
-  - schema / pool / timeout設定を検証
+  - schema / pool / connection / idle / statement / lock timeoutを検証
 - PostgreSQL migration executor。
   - 専用pool connection
   - search path固定
   - 非待機advisory lockによる同時Migrator拒否
   - migration単位transaction
+  - 初回`schema_migrations`作成もMigration 1と同じtransactionへ包含
   - DDLとhistory INSERTのatomicity
+  - rollback / advisory unlock失敗時はconnectionをpoolへ戻さず破棄
   - rollback失敗で元migration errorを隠さない
 - `DB_PROVIDER=postgresql`で以下を利用可能。
   - `pnpm db:migrate`
   - `pnpm db:migrate --plan`
   - `pnpm db:migrate --status`
-- CLIはprovider / version / nameだけを出力し、SQL・parameters・credentials・dataを出力しない。
+- CLI成功時はprovider / version / nameだけを出力する。
+- CLI失敗時はevent / provider / mode / errorTypeだけをJSON出力し、raw error、stack、cause、connection URLを出力しない。
 - GitHub Actions integration jobへPostgreSQL 18.4 service containerを追加。
 - 実PostgreSQLへ既存DatabaseClient共通contractを適用。
-- 実PostgreSQL migration integrationで以下を検証。
-  - migration 1〜3適用
-  - 再実行no-op
-  - logical table作成
-  - outbox CHECK constraint
-  - migration失敗時のDDL / history rollback
-  - checksum drift拒否
-  - concurrent Migrator拒否
+
+### 実PostgreSQL test
+
+- Migration 1〜3適用
+- 再実行no-op
+- Logical table / outbox CHECK constraint
+- Migration失敗時のDDL / history rollback
+- 初回Migration 1失敗時のbootstrap history table rollback
+- Checksum drift拒否
+- Concurrent Migrator拒否
+- Advisory unlock失敗時のconnection破棄
+- CLI失敗時のcredential / host / raw cause非出力
+- DatabaseClient query / execute / transaction / lifecycle contract
+
+### 自己レビュー
+
+Ready移行時の自動コードレビューはCodex利用上限により実行されなかったため、PR差分を手動レビューした。
+
+検出・修正:
+
+1. URL query parameterによるTLS設定上書き余地をURL validationで拒否。
+2. Uncaught errorの`cause`がCLIへ展開される余地をsafe failure JSONへ変更。
+3. Advisory unlock失敗時にlock保持connectionをpoolへ戻す可能性を`release(true)`で解消。
+4. 初回Migration 1失敗後にbootstrap history tableだけが残る可能性をtransaction包含で解消。
+5. Statement / lock待機が無期限化しないよう有限timeoutを追加。
 
 ### 現在の確認結果
 
@@ -121,11 +142,12 @@
 ## 優先順位
 
 1. Issue #137 / PR #138をレビュー・mergeする。
-2. Submission / challenge / outbox Repositoryをasync DatabaseClientへ段階移行する。
-3. Outbox claim / leaseを実装する。
-4. RDS / Secrets Manager / network IaCを追加する。
-5. Data migration toolとstaging cutover rehearsalを実施する。
-6. ECS one-shot MigratorとAPI / Worker wiringを追加する。
+2. Challenge Repositoryをasync DatabaseClientへ移行する。
+3. Submission基本操作、lease / fencing、outbox transactionを段階移行する。
+4. Outbox claim / leaseを実装する。
+5. RDS / Secrets Manager / network IaCを追加する。
+6. Data migration toolとstaging cutover rehearsalを実施する。
+7. ECS one-shot MigratorとAPI / Worker wiringを追加する。
 
 ## 参照先
 
