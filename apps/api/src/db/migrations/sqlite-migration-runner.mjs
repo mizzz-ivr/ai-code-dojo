@@ -5,26 +5,7 @@ import {
   validateMigrationManifest
 } from './migration-contract.mjs';
 import { migrationManifest } from './migration-manifest.mjs';
-
-export const SQLITE_MIGRATION_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS ${MIGRATION_TABLE_NAME} (
-    version INTEGER PRIMARY KEY,
-    name TEXT NOT NULL,
-    provider TEXT NOT NULL,
-    checksum TEXT NOT NULL,
-    applied_at TEXT NOT NULL
-  );
-`;
-
-export const POSTGRESQL_MIGRATION_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS ${MIGRATION_TABLE_NAME} (
-    version INTEGER PRIMARY KEY,
-    name TEXT NOT NULL,
-    provider TEXT NOT NULL,
-    checksum TEXT NOT NULL,
-    applied_at TEXT NOT NULL
-  );
-`;
+import { SQLITE_MIGRATION_TABLE_SQL } from './migration-table-sql.mjs';
 
 const assertDatabase = (database) => {
   if (!database || typeof database.prepare !== 'function' || typeof database.exec !== 'function') {
