@@ -1,6 +1,6 @@
 # active-issues（正本）
 
-最終更新: 2026-08-07（Issue #139 / PR #140を実装中）
+最終更新: 2026-08-07（Issue #139 / PR #140をレビュー可能状態へ整備）
 
 ## この文書の目的
 
@@ -17,7 +17,7 @@
 ### #139 Admin Challenge Repositoryをasync DatabaseClientへ移行する
 
 - 優先度: P2
-- 状態: Open / In Progress
+- 状態: Open / Ready for review
 - GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/139`
 - GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/140`
 - Branch: `feat/challenge-repository-async-db`
@@ -65,18 +65,20 @@ DB-backedなAdmin Challenge Repositoryを同期SQLite固有APIからasync Databa
 
 #### 現在の確認結果
 
-初回Repository / contract test実装時点:
-
+- Docs validation: Success
 - Frozen lockfile install: Success
 - Lint: Success
 - Typecheck: Success
 - Unit test: Success
-- PostgreSQL integration test: Success
+- PostgreSQL 18.4 integration test: Success
 - Schema validation: Success
 - Infra validation: Success
 - Build: Success
-
-自己レビューでPostgreSQL同時Version採番の競合余地を検出し、Challenge row lockとconcurrency integration testを追加した。最終docs反映後に全品質ゲートを再確認する。
+- 同一ChallengeへのPostgreSQL同時Version追加: Success
+- PR: Ready for review / mergeable
+- Inline review thread: 0件
+- 自動Codex review: 利用上限のため未実行
+- Manual self-review: 完了。同時Version採番競合を検出・修正済み
 
 ## Blocked Issue
 
