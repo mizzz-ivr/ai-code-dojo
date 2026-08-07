@@ -94,11 +94,13 @@ export const createAdminChallengeRepository = ({
 
   const createAdminChallengeVersion = async (challengeId, versionData) =>
     databaseClient.transaction(async (transaction) => {
-      const challenge = firstRow(await transaction.query(
-        'SELECT id FROM challenges WHERE id = ?',
+      // SQLiteはBEGIN IMMEDIATE、PostgreSQLはこのno-op UPDATEのrow lockで
+      // 同一ChallengeのMAX(version)採番を直列化する。
+      const lockResult = await transaction.execute(
+        'UPDATE challenges SET updated_at = updated_at WHERE id = ?',
         [challengeId]
-      ));
-      if (!challenge) return null;
+      );
+      if (lockResult.rowCount === 0) return null;
 
       const versionRow = firstRow(await transaction.query(
         'SELECT COALESCE(MAX(version), 0) AS version FROM challenge_versions WHERE challenge_id = ?',
