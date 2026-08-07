@@ -1,6 +1,6 @@
 # current-status（正本）
 
-最終更新: 2026-08-07（Issue #139 / PR #140 Admin Challenge Repository async化を実装中）
+最終更新: 2026-08-07（Issue #139 / PR #140 Admin Challenge Repository async化をレビュー可能状態へ整備）
 
 ## この文書の目的
 
@@ -16,7 +16,7 @@
 - PR #134でprovider非依存の非同期DatabaseClient contractをmerge済み。
 - PR #136でversioned migration runnerとSQLite / PostgreSQL共通logical schemaをmerge済み。
 - PR #138で実PostgreSQL migration executor、`pg` driver、実DB integration testをmerge済み。
-- Issue #139 / PR #140でDB-backedなAdmin Challenge Repositoryをasync DatabaseClientへ移行中。
+- Issue #139 / PR #140でDB-backedなAdmin Challenge Repositoryをasync DatabaseClientへ移行済み。PRはReady for review。
 - Linearは無料Issue上限のため、Issue #139はGitHub Issue / Repository docs / Notionを管理正本とする。
 
 ## 現行runtime
@@ -72,7 +72,7 @@ Public Challengeのfile-backed配信は変更しない。
 - PostgreSQL: `UPDATE challenges SET updated_at = updated_at WHERE id = ?`でrow lockを取得。
 - Lock取得後に`MAX(version)`を読み、Version INSERTとcurrent pointer更新まで同一transactionで処理。
 - `UNIQUE(challenge_id, version)`は最終防御として維持。
-- 実PostgreSQLで2件を同時追加し、Version 1 / 2 / 3の連番になることを検証する。
+- 実PostgreSQLで2件を同時追加し、Version 1 / 2 / 3の連番になることを検証済み。
 
 ### Repository contract test
 
@@ -89,6 +89,22 @@ SQLiteとPostgreSQLの両providerで以下を共通確認する。
 - published slug lookup
 - missing ID / slug
 - Challenge作成途中失敗時のrollback
+
+### 最終確認
+
+- Docs validation: Success
+- Frozen lockfile install: Success
+- Lint: Success
+- Typecheck: Success
+- Unit test: Success
+- PostgreSQL 18.4 integration test: Success
+- Schema validation: Success
+- Infra validation: Success
+- Build: Success
+- PR: Ready for review / mergeable
+- Inline review thread: 0件
+- 自動Codex review: 利用上限のため未実行
+- Manual self-review: 完了。同時Version採番競合を検出・修正済み
 
 ### 現在の境界
 
