@@ -17,7 +17,7 @@
 ### #141 公開Challengeの検索・絞り込みとJS/TS実践問題を追加する
 
 - 優先度: P2
-- 状態: Open / PR #142 Ready候補
+- 状態: Open / PR #142 Ready for review / mergeable
 - GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/141`
 - GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/142`
 - Branch: `feat/challenge-catalog-expansion`
@@ -72,10 +72,11 @@ SQL / Python / HTML-CSS RunnerはIssue #143へ分離する。
 4. Webだけの言語guardは直接API呼び出しで迂回できたため、APIでChallenge存在・対応言語・runner allowlistを永続化前に検証。
 5. 旧infra failure integrationが存在しないChallengeのPublic API作成に依存していたため、内部Repository fixture + 正規queue messageへ変更。
 
-#### Code head確認結果
+#### 最終確認結果
 
-`670bca84bb8a7dcabf84a68687493ee8cbaa6378`で以下が成功済み。
+Head `11d1d556d93a76e08c7327898599c4b463fb39d6`で以下が成功済み。
 
+- Docs validation: Success
 - Frozen lockfile install: Success
 - Lint: Success
 - Typecheck: Success
@@ -85,8 +86,8 @@ SQL / Python / HTML-CSS RunnerはIssue #143へ分離する。
 - Schema validation: Success
 - Infra validation: Success
 - Build: Success
-
-最新docs headでも最終CI成功後にPR #142をReady for reviewへ移行する。
+- PR: Ready for review / mergeable
+- Inline review thread: 0件
 
 #### 完了条件
 
