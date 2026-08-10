@@ -40,6 +40,7 @@
 - starter failure / reference solution successのcontent contract integration test
 - 問題詳細の`metadata.category`表示修正
 - HTML attribute escape強化
+- 採点未対応Challengeの一覧 / 詳細 / POST提出fail-closed
 - architecture / log / prompt / handoff / canonical docs
 
 #### 追加Challenge
@@ -49,24 +50,16 @@
 - `ts-feature-access-policy`: medium / feature
 - `ts-refactor-feature-flags`: hard / refactor
 
-#### 非対象
-
-- Python / HTML-CSS Challenge追加
-- Python / HTML-CSS Runner
-- Public Challenge DB-backed化
-- Admin/Public datasource統合
-- Submission / lease / outbox変更
-- Production runtime変更
-
 #### 言語gate
 
-Problem schemaはPython / HTML-CSSも予約しているが、現行Worker isolation runnerはNode test runner前提。Runnerと実行契約テストがない言語を公開UIで「対応済み」にしない。
+実行経路確認により、現行Workerで採点確認済みなのはJavaScript / TypeScript。
 
-現行公開catalogのlanguage候補:
+- JavaScript: 提出可能
+- TypeScript: Node 22.23.1で実Challenge contract成功、提出可能
+- SQL: 既存ProblemはPython / SQLite command前提だがWorkerは`node --test`固定のため採点準備中
+- Python / HTML-CSS: Runner未実装
 
-- javascript
-- typescript
-- sql
+PR #142ではJavaScript / TypeScript以外をWebからAPIへ提出しない。SQL / Python / HTML-CSS RunnerはIssue #143へ分離する。
 
 #### 初回CIで見つかった問題
 
@@ -76,28 +69,49 @@ Problem schemaはPython / HTML-CSSも予約しているが、現行Worker isolat
 
 #### 完了条件
 
-- 公開Challengeが3件から7件へ増える。
+- File-backed Challengeが3件から7件へ増える。
 - 追加4問のstarterが最初から全testを通らない。
 - reference solutionでvisible / hidden testをすべて通過する。
 - keyword / difficulty / category / languageで絞り込める。
 - filter条件がURL queryに保持される。
 - 未知filter値を500にしない。
-- Python / HTML-CSSを対応済み言語として表示しない。
+- 採点未対応言語を対応済みfilter候補にしない。
+- 採点未対応Challengeから提出できない。
 - hidden test sourceをlearnerへ露出しない。
 - Production runtimeをSQLite / HTTPのまま維持する。
 - 全品質ゲートが成功する。
 
+### #143 SQL・Python・HTML/CSS向け言語別Runner contractを導入する
+
+- 優先度: P2
+- 状態: Open / #141後続
+- GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/143`
+- Linear: #141と同じ無料Issue上限のためGitHubを正本とする。
+
+#### 目的
+
+Problem schemaの対応言語とWorkerの実行能力を一致させ、SQL / Python / HTML-CSS Challengeを安全に提出可能にする。
+
+#### 必須境界
+
+- Problem JSON由来の`testCommand`を任意shell commandとして直接実行しない。
+- language / runner typeをallowlistして固定runnerへdispatchする。
+- unsupported languageを実行前にfail-closed拒否する。
+- timeout / network disabled / resource isolationを維持する。
+- API processでsubmission codeを直接実行しない。
+- hidden testsをlearnerへ返さない。
+
 ## Blocked Issue
 
-### Python / HTML-CSS Challenge公開
+### SQL / Python / HTML-CSS Challengeの提出可能化
 
-- 状態: Blocked / Runner dependency required
-- 理由: Problem schema上は定義可能だが、現行WorkerはNode test runner前提。
+- 状態: Blocked / Issue #143 required
 - 再開条件:
-  1. 言語別Runner contractを定義する。
-  2. isolation / timeout / network disabledを維持する。
-  3. 実Challengeでstarter failure / reference solution successを確認する。
-  4. learner向けUIへ対応言語として表示する。
+  1. 言語別Runner contractを実装する。
+  2. toolchain / image versionを固定する。
+  3. isolation / timeout / network disabledを維持する。
+  4. 実Challengeでstarter failure / reference solution successを確認する。
+  5. learner向けUIへ対応言語として追加する。
 
 ### ECS task definition / service wiring
 
@@ -129,20 +143,14 @@ Problem schemaはPython / HTML-CSSも予約しているが、現行Worker isolat
 - 完了日: 2026-08-06（日本時間）
 - 反映内容: Versioned migration manifest、provider別schema、checksum / drift検出、SQLite runner、有限busy timeoutを実装した。
 
-### #133 / PR #134（完了済み）
-
-- 完了日: 2026-08-05（日本時間）
-- 反映内容: Async DatabaseClient contract、SQLite adapter、PostgreSQL provider境界、共通contract testを実装した。
-
 ## Follow-up Issue Candidates
 
 ユーザー価値:
 
-1. Python Runner + Python Challenge（P2）
+1. Issue #143 SQL / Python / HTML-CSS言語別Runner（P2）
 2. Challenge tag検索 / 学習トラック（P2）
 3. おすすめChallenge / 次に解く問題（P2）
 4. 進捗ページの実データ化（P2）
-5. HTML/CSS評価Runner + Frontend Challenge（P2）
 
 基盤依存:
 
@@ -160,6 +168,8 @@ Problem schemaはPython / HTML-CSSも予約しているが、現行Worker isolat
 ## Scale / safety gate
 
 - Runner未実装言語を公開catalogで対応済みとして表示しない。
+- 採点未対応languageをWebからAPIへforwardしない。
+- Problem JSON由来commandを任意shellとして実行しない。
 - Hidden testsをlearner向け公開境界へ返さない。
 - API processでsubmission codeを直接実行しない。
 - Challenge Versionは既存rowを上書きせず新versionとして追加する。
