@@ -1,6 +1,6 @@
 # active-issues（正本）
 
-最終更新: 2026-08-10（Issue #141 / PR #142 公開Challenge catalog拡充を実装）
+最終更新: 2026-08-10（Issue #141 / PR #142 公開Challenge catalog拡充をレビュー可能状態へ整備）
 
 ## この文書の目的
 
@@ -17,7 +17,7 @@
 ### #141 公開Challengeの検索・絞り込みとJS/TS実践問題を追加する
 
 - 優先度: P2
-- 状態: Open / PR #142 Draft
+- 状態: Open / PR #142 Ready候補
 - GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/141`
 - GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/142`
 - Branch: `feat/challenge-catalog-expansion`
@@ -25,23 +25,28 @@
 
 #### 目的
 
-公開Challengeを3件から増やし、学習者がkeyword / difficulty / category / languageで問題を探せるようにする。現行Workerで実際に採点できるJS/TS実践問題を追加する。
+公開Challengeを3件から増やし、学習者がkeyword / difficulty / category / languageで問題を探せるようにする。現行Node系runnerで実際に採点できるJavaScript / TypeScript実践問題を追加する。
 
-#### 対象
+#### 実装済み
 
-- title / slug keyword filter
-- difficulty / category / language filter
-- GET query stringによる条件保持
-- 0件表示 / 件数表示
-- 不正・未知filter値のfail-safe
-- JavaScript実践Challenge 2件
-- TypeScript実践Challenge 2件
-- visible / hidden test分離
-- starter failure / reference solution successのcontent contract integration test
-- 問題詳細の`metadata.category`表示修正
-- HTML attribute escape強化
-- 採点未対応Challengeの一覧 / 詳細 / POST提出fail-closed
-- architecture / log / prompt / handoff / canonical docs
+- File-backed Challenge 3件 → 7件。
+- title / slug keyword filter。
+- difficulty / category / language filter。
+- GET query stringによる条件保持。
+- 0件表示 / `filtered / total`件数表示。
+- 不正・未知filter値のfail-safe。
+- JavaScript実践Challenge 2件。
+- TypeScript実践Challenge 2件。
+- visible / hidden test分離。
+- starter failure / reference solution successのcontent contract integration test。
+- 問題詳細の`metadata.category`表示修正。
+- HTML attribute escape強化。
+- JS / TS runner language policyを`runner-sdk`へ共通化。
+- Web / API / Workerで共通runner allowlistを利用。
+- APIでChallenge存在・slug・languageをsubmission永続化前に検証。
+- Workerでもlegacy / internal queue経路を同じpolicyでfail-closed。
+- TypeScriptをAPI → queue → Worker → visible / hidden testまでE2E確認。
+- SQL等の採点未対応Challengeを一覧 / 詳細 / Web POST / API / Workerでfail-closed。
 
 #### 追加Challenge
 
@@ -52,20 +57,36 @@
 
 #### 言語gate
 
-実行経路確認により、現行Workerで採点確認済みなのはJavaScript / TypeScript。
+- JavaScript: 提出可能。
+- TypeScript: Node 22.23.1で実API → Worker E2E成功、提出可能。
+- SQL: 既存ProblemはPython / SQLite command前提だが現行Node系runnerはそのcommandを実行しないため採点準備中。
+- Python / HTML-CSS: Runner未実装。
 
-- JavaScript: 提出可能
-- TypeScript: Node 22.23.1で実Challenge contract成功、提出可能
-- SQL: 既存ProblemはPython / SQLite command前提だがWorkerは`node --test`固定のため採点準備中
-- Python / HTML-CSS: Runner未実装
+SQL / Python / HTML-CSS RunnerはIssue #143へ分離する。
 
-PR #142ではJavaScript / TypeScript以外をWebからAPIへ提出しない。SQL / Python / HTML-CSS RunnerはIssue #143へ分離する。
+#### 実装中に検出・修正した問題
 
-#### 初回CIで見つかった問題
+1. 親Node test runnerの`NODE_TEST_CONTEXT`が子`node --test`へ継承され、Challenge testが再帰実行としてskipされexit 0になる検証ハーネス不具合を修正。
+2. 既存SQL Challengeがschema-validでも現行Workerでは採点不能である不整合を確認し、fail-closed化。
+3. Workerが`language !== 'javascript'`を固定拒否していたため、共通policyへ変更しTypeScript E2Eを追加。
+4. Webだけの言語guardは直接API呼び出しで迂回できたため、APIでChallenge存在・対応言語・runner allowlistを永続化前に検証。
+5. 旧infra failure integrationが存在しないChallengeのPublic API作成に依存していたため、内部Repository fixture + 正規queue messageへ変更。
 
-`challenge-content-contract.test.mjs`から子`node --test`を実行した際、親のNode test runner内部変数`NODE_TEST_CONTEXT`が継承され、再帰testとして全fileがskipされexit 0になる問題を検出した。
+#### Code head確認結果
 
-子processのenvから`NODE_TEST_CONTEXT`だけを除外し、実Runner相当の独立processでChallenge testを実行するよう修正した。修正後のcode headではlint / typecheck / unit / integration / schema / infra / buildが成功済み。
+`670bca84bb8a7dcabf84a68687493ee8cbaa6378`で以下が成功済み。
+
+- Frozen lockfile install: Success
+- Lint: Success
+- Typecheck: Success
+- Unit test: Success
+- Integration test: Success
+- TypeScript API → Worker E2E: Success
+- Schema validation: Success
+- Infra validation: Success
+- Build: Success
+
+最新docs headでも最終CI成功後にPR #142をReady for reviewへ移行する。
 
 #### 完了条件
 
@@ -76,8 +97,10 @@ PR #142ではJavaScript / TypeScript以外をWebからAPIへ提出しない。SQ
 - filter条件がURL queryに保持される。
 - 未知filter値を500にしない。
 - 採点未対応言語を対応済みfilter候補にしない。
-- 採点未対応Challengeから提出できない。
+- 採点未対応ChallengeからWeb / API経由でsubmissionを作成できない。
+- TypeScriptを実Worker経路で採点できる。
 - hidden test sourceをlearnerへ露出しない。
+- Submission + outbox atomicity / lease / fencing / completion guardを変更しない。
 - Production runtimeをSQLite / HTTPのまま維持する。
 - 全品質ゲートが成功する。
 
@@ -86,7 +109,7 @@ PR #142ではJavaScript / TypeScript以外をWebからAPIへ提出しない。SQ
 - 優先度: P2
 - 状態: Open / #141後続
 - GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/143`
-- Linear: #141と同じ無料Issue上限のためGitHubを正本とする。
+- Linear: 無料Issue上限のためGitHubを正本とする。
 
 #### 目的
 
@@ -168,7 +191,8 @@ Problem schemaの対応言語とWorkerの実行能力を一致させ、SQL / Pyt
 ## Scale / safety gate
 
 - Runner未実装言語を公開catalogで対応済みとして表示しない。
-- 採点未対応languageをWebからAPIへforwardしない。
+- Web / API / Workerでrunner allowlistを分散定義しない。
+- 採点未対応languageをsubmission / outboxへ永続化しない。
 - Problem JSON由来commandを任意shellとして実行しない。
 - Hidden testsをlearner向け公開境界へ返さない。
 - API processでsubmission codeを直接実行しない。
