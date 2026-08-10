@@ -23,21 +23,34 @@ Query parameter:
 - `q`: title / slugの部分一致。前後空白を除去し最大80文字。
 - `difficulty`: easy / medium / hard。
 - `category`: bugfix / feature / sql / refactor。
-- `language`: javascript / typescript / sql。
+- `language`: javascript / typescript。
 
 未知のenum値はerrorにせず無効条件として扱う。query値をHTMLへ戻す場合は属性値もescapeする。
 
 ## 言語公開境界
 
-Problem schema自体は`python`と`html-css`も予約しているが、現行Worker isolation runnerはNode test runnerを使用している。
+Problem schemaはJavaScript / TypeScript / Python / SQL / HTML-CSSを定義可能にしているが、現行Worker isolation runnerはChallengeの`runnerConfig.testCommand`を実行せず、visible / hidden test pathを`node --test`へ固定で渡す。
 
-そのため公開catalogの言語filterへ表示するのは、現時点で採点可能性を確認できる次の3言語だけとする。
+実行契約を確認した結果、現時点で公開Webから提出可能とするのはJavaScript / TypeScriptだけとする。
 
-- javascript
-- typescript
-- sql
+- javascript: 提出可能
+- typescript: Node 22.23.1上で実Challenge contractを確認済み、提出可能
+- sql: 既存`sql-monthly-sales`はPython / SQLite test command前提のため採点準備中
+- python: Runner未実装
+- html-css: Runner未実装
 
-Python / HTML-CSSはRunner実装と実行契約テストが完了するまで、対応済みとして公開UIへ表示しない。
+SQL / Python / HTML-CSSはIssue #143で言語別Runner contractを導入し、実Challengeでstarter failure / reference solution successを確認してから提出可能へ移す。
+
+## Fail-closed UI
+
+採点未対応Challengeを既存contentから削除はしない。ただし壊れた採点へ誘導しない。
+
+- 一覧にはChallengeを表示するが、actionを「採点準備中」にする。
+- 詳細URLへ直接アクセスしても提出formを表示しない。
+- Web `/submit`へ未対応languageを直接POSTしても400で拒否し、APIへforwardしない。
+- language filter候補へ未対応languageを表示しない。
+
+この境界はAPI側の最終認可・実行制御を置き換えるものではなく、learner向けWebのfail-closed保護である。言語別Runner導入時にはWorker側でもunsupported languageを実行前に拒否する。
 
 ## Challenge追加ルール
 
@@ -51,6 +64,7 @@ Python / HTML-CSSはRunner実装と実行契約テストが完了するまで、
 - `networkAccess: disabled`を維持する。
 - hidden test内容をlearner向けAPI/UIへ露出しない。
 - 既存Challengeを書き換えず、新しいslugで追加する。
+- 現行Workerで実行契約を検証できない言語のChallengeは公開提出可能にしない。
 
 ## Issue #141で追加するChallenge
 
@@ -67,10 +81,11 @@ Python / HTML-CSSはRunner実装と実行契約テストが完了するまで、
 - query値はHTML出力前にescapeする。
 - 未知filter値を500要因にしない。
 - 公開UIが採点不能言語を対応済みと誤認させない。
+- Problem JSON由来の任意command stringをWorkerでshell実行する方式へ安易に拡張しない。
 
 ## 非対象
 
-- Python / HTML-CSS Runner
+- SQL / Python / HTML-CSS Runner本体（Issue #143）
 - Public Challenge DB-backed化
 - Admin Challengeとのdata source統合
 - Submission / lease / outbox変更
