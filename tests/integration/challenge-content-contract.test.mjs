@@ -39,6 +39,19 @@ const challengeCases = [
 `
   },
   {
+    slug: 'ts-feature-user-display',
+    solution: `export interface User {
+  firstName: string;
+  lastName: string;
+  nickName?: string;
+}
+
+export function formatDisplayName(user: User): string {
+  return user.nickName ?? \`${'${user.firstName}'} ${'${user.lastName}'}\`;
+}
+`
+  },
+  {
     slug: 'ts-feature-access-policy',
     solution: `export type Role = 'admin' | 'editor' | 'viewer';
 export type AccessLevel = 'blocked' | 'full' | 'write' | 'read';
