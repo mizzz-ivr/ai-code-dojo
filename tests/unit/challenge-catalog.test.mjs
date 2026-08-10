@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   CHALLENGE_CATALOG_OPTIONS,
   filterChallenges,
+  isChallengeRunnable,
   readChallengeCatalogFilters
 } from '../../apps/web/src/challenge-catalog.mjs';
 
@@ -22,10 +23,19 @@ test('catalog filterをquery stringから正規化する', () => {
   });
 });
 
-test('公開言語候補は現行Workerで採点可能な範囲に限定する', () => {
-  assert.deepEqual(CHALLENGE_CATALOG_OPTIONS.languages, ['javascript', 'typescript', 'sql']);
-  const filters = readChallengeCatalogFilters(new URLSearchParams('language=python'));
-  assert.equal(filters.language, '');
+test('公開言語filterは現行Workerで採点確認済みのJS/TSに限定する', () => {
+  assert.deepEqual(CHALLENGE_CATALOG_OPTIONS.languages, ['javascript', 'typescript']);
+  assert.equal(readChallengeCatalogFilters(new URLSearchParams('language=python')).language, '');
+  assert.equal(readChallengeCatalogFilters(new URLSearchParams('language=sql')).language, '');
+});
+
+test('Challengeの採点可否を言語からfail-closed判定する', () => {
+  assert.equal(isChallengeRunnable(challenges[0]), true);
+  assert.equal(isChallengeRunnable(challenges[1]), true);
+  assert.equal(isChallengeRunnable(challenges[2]), false);
+  assert.equal(isChallengeRunnable({ metadata: { supportedLanguages: ['typescript'] } }), true);
+  assert.equal(isChallengeRunnable({ supportedLanguages: ['javascript', 'sql'] }), false);
+  assert.equal(isChallengeRunnable({ supportedLanguages: [] }), false);
 });
 
 test('未知のenum filterは無効化して500要因にしない', () => {
