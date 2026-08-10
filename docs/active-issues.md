@@ -1,6 +1,6 @@
 # active-issues（正本）
 
-最終更新: 2026-08-07（Issue #139 / PR #140をレビュー可能状態へ整備）
+最終更新: 2026-08-10（Issue #141 / PR #142 公開Challenge catalog拡充を実装）
 
 ## この文書の目的
 
@@ -14,73 +14,90 @@
 
 ## 進行中Issue
 
-### #139 Admin Challenge Repositoryをasync DatabaseClientへ移行する
+### #141 公開Challengeの検索・絞り込みとJS/TS実践問題を追加する
 
 - 優先度: P2
-- 状態: Open / Ready for review
-- GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/139`
-- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/140`
-- Branch: `feat/challenge-repository-async-db`
+- 状態: Open / PR #142 Draft
+- GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/141`
+- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/142`
+- Branch: `feat/challenge-catalog-expansion`
 - Linear: 無料Issue上限により作成不可。GitHub Issue / Repository docs / Notionを管理正本とする。
 
 #### 目的
 
-DB-backedなAdmin Challenge Repositoryを同期SQLite固有APIからasync DatabaseClientへ移し、SQLite / PostgreSQLで同じRepository契約を保証する。
+公開Challengeを3件から増やし、学習者がkeyword / difficulty / category / languageで問題を探せるようにする。現行Workerで実際に採点できるJS/TS実践問題を追加する。
 
 #### 対象
 
-- Admin Challenge Repository factory
-- DatabaseClient注入
-- 現行SQLite runtime adapter境界
-- Challenge + Version 1 atomic create
-- Version append + current pointer atomic update
-- Challenge単位のVersion採番直列化
-- SQLite / PostgreSQL共通Repository contract
-- 実PostgreSQL 18.4 integration test
-- Existing Repository export / Admin API contract維持
-- Architecture / log / prompt / handoff / canonical docs
+- title / slug keyword filter
+- difficulty / category / language filter
+- GET query stringによる条件保持
+- 0件表示 / 件数表示
+- 不正・未知filter値のfail-safe
+- JavaScript実践Challenge 2件
+- TypeScript実践Challenge 2件
+- visible / hidden test分離
+- starter failure / reference solution successのcontent contract integration test
+- 問題詳細の`metadata.category`表示修正
+- HTML attribute escape強化
+- architecture / log / prompt / handoff / canonical docs
+
+#### 追加Challenge
+
+- `js-refactor-order-summary`: medium / refactor
+- `js-bugfix-pagination-window`: hard / bugfix
+- `ts-feature-access-policy`: medium / feature
+- `ts-refactor-feature-flags`: hard / refactor
 
 #### 非対象
 
-- Public Challenge RepositoryのDB移行
-- `/api/challenges` data source切替
-- Submission Repository
-- Processing lease / attempt fencing
-- Submission + queue outbox atomic transaction
-- Application全体のPostgreSQL切替
-- RDS / ECS / Secrets Manager
-- Data migration / production cutover
+- Python / HTML-CSS Challenge追加
+- Python / HTML-CSS Runner
+- Public Challenge DB-backed化
+- Admin/Public datasource統合
+- Submission / lease / outbox変更
+- Production runtime変更
+
+#### 言語gate
+
+Problem schemaはPython / HTML-CSSも予約しているが、現行Worker isolation runnerはNode test runner前提。Runnerと実行契約テストがない言語を公開UIで「対応済み」にしない。
+
+現行公開catalogのlanguage候補:
+
+- javascript
+- typescript
+- sql
+
+#### 初回CIで見つかった問題
+
+`challenge-content-contract.test.mjs`から子`node --test`を実行した際、親のNode test runner内部変数`NODE_TEST_CONTEXT`が継承され、再帰testとして全fileがskipされexit 0になる問題を検出した。
+
+子processのenvから`NODE_TEST_CONTEXT`だけを除外し、実Runner相当の独立processでChallenge testを実行するよう修正した。修正後のcode headではlint / typecheck / unit / integration / schema / infra / buildが成功済み。
 
 #### 完了条件
 
-- Repository本体が`getDb()` / `prepare()` / `run()`へ直接依存しない。
-- Challenge作成とVersion 1保存がatomicである。
-- Version追加とcurrent pointer更新がatomicである。
-- 同一Challengeへの同時Version追加で重複versionを作らない。
-- SQLite / PostgreSQLで同じRepository contractが成功する。
-- 既存Versionを上書きしない。
-- Public file-backed Challenge配信へ副作用がない。
+- 公開Challengeが3件から7件へ増える。
+- 追加4問のstarterが最初から全testを通らない。
+- reference solutionでvisible / hidden testをすべて通過する。
+- keyword / difficulty / category / languageで絞り込める。
+- filter条件がURL queryに保持される。
+- 未知filter値を500にしない。
+- Python / HTML-CSSを対応済み言語として表示しない。
+- hidden test sourceをlearnerへ露出しない。
 - Production runtimeをSQLite / HTTPのまま維持する。
 - 全品質ゲートが成功する。
 
-#### 現在の確認結果
-
-- Docs validation: Success
-- Frozen lockfile install: Success
-- Lint: Success
-- Typecheck: Success
-- Unit test: Success
-- PostgreSQL 18.4 integration test: Success
-- Schema validation: Success
-- Infra validation: Success
-- Build: Success
-- 同一ChallengeへのPostgreSQL同時Version追加: Success
-- PR: Ready for review / mergeable
-- Inline review thread: 0件
-- 自動Codex review: 利用上限のため未実行
-- Manual self-review: 完了。同時Version採番競合を検出・修正済み
-
 ## Blocked Issue
+
+### Python / HTML-CSS Challenge公開
+
+- 状態: Blocked / Runner dependency required
+- 理由: Problem schema上は定義可能だが、現行WorkerはNode test runner前提。
+- 再開条件:
+  1. 言語別Runner contractを定義する。
+  2. isolation / timeout / network disabledを維持する。
+  3. 実Challengeでstarter failure / reference solution successを確認する。
+  4. learner向けUIへ対応言語として表示する。
 
 ### ECS task definition / service wiring
 
@@ -89,17 +106,23 @@ DB-backedなAdmin Challenge Repositoryを同期SQLite固有APIからasync Databa
   1. DB adapter contract: PR #134で完了
   2. Versioned schema / SQLite runner: PR #136で完了
   3. 実PostgreSQL test / executor: PR #138で完了
-  4. Repository async移行: Issue #139から段階進行
-  5. Outbox claim / lease
-  6. RDS / secret / network IaC
-  7. Data migration tool / staging rehearsal
+  4. Admin Challenge Repository async化: PR #140で完了
+  5. Submission / lease / outbox Repository async移行
+  6. Outbox claim / lease
+  7. RDS / secret / network IaC
+  8. Data migration tool / staging rehearsal
 
 ## Recently Completed
+
+### #139 / PR #140（完了済み）
+
+- 完了日: 2026-08-10（日本時間）
+- 反映内容: Admin Challenge Repositoryをasync DatabaseClientへ移行し、Challenge create / version appendのatomicityとPostgreSQL同時Version採番を保証した。
 
 ### #137 / PR #138（完了済み）
 
 - 完了日: 2026-08-07（日本時間）
-- 反映内容: PostgreSQL 18.4、`pg` driver、実PostgreSQL migration executor、DatabaseClient実DB contract、migration安全対策を実装した。
+- 反映内容: PostgreSQL 18.4、`pg` driver、実PostgreSQL migration executor、DatabaseClient実DB contractを実装した。
 
 ### #135 / PR #136（完了済み）
 
@@ -111,14 +134,17 @@ DB-backedなAdmin Challenge Repositoryを同期SQLite固有APIからasync Databa
 - 完了日: 2026-08-05（日本時間）
 - 反映内容: Async DatabaseClient contract、SQLite adapter、PostgreSQL provider境界、共通contract testを実装した。
 
-### #131 / PR #132（完了済み）
-
-- 完了日: 2026-08-05（日本時間）
-- 反映内容: RDS PostgreSQL採用、API / Worker / Migrator分離、DB role / secret / network、cutover / rollback、後続Issue依存順を設計した。
-
 ## Follow-up Issue Candidates
 
-依存順:
+ユーザー価値:
+
+1. Python Runner + Python Challenge（P2）
+2. Challenge tag検索 / 学習トラック（P2）
+3. おすすめChallenge / 次に解く問題（P2）
+4. 進捗ページの実データ化（P2）
+5. HTML/CSS評価Runner + Frontend Challenge（P2）
+
+基盤依存:
 
 1. Submission read / simple writeのasync移行（P2）
 2. Submission processing lease / attempt fencingのasync移行（P2）
@@ -130,16 +156,16 @@ DB-backedなAdmin Challenge Repositoryを同期SQLite固有APIからasync Databa
 8. API / Worker / Migrator ECS wiring（P2）
 9. Staging cutover rehearsal / rollback drill（P2）
 10. Public ChallengeをDB-backed管理へ統合するかの設計（P2）
-11. Challengeコンテンツ拡充（言語・難易度・カテゴリ追加）（P2）
 
-## Scale gate
+## Scale / safety gate
 
-- Outbox claim / lease完了前にAPI desired countを1より増やさない。
-- DB cutoverとSQS transport切替を同じchangeへ含めない。
-- Repository実PostgreSQL contract test前にproduction DBへ切り替えない。
-- Challenge Versionは既存rowを上書きせず新versionとして追加する。
+- Runner未実装言語を公開catalogで対応済みとして表示しない。
 - Hidden testsをlearner向け公開境界へ返さない。
+- API processでsubmission codeを直接実行しない。
+- Challenge Versionは既存rowを上書きせず新versionとして追加する。
 - Submission + outbox atomicityをRepository移行で弱めない。
 - Processing lease / attempt fencing / completion guardを弱めない。
+- Outbox claim / lease完了前にAPI desired countを1より増やさない。
+- DB cutoverとSQS transport切替を同じchangeへ含めない。
 - Application roleへDDL権限を付与しない。
 - Actual AWS resourceはreview-only change setと明示承認を経る。
