@@ -18,9 +18,9 @@
     "background": "管理画面のユーザー一覧で表示名を統一する要件が追加されました。",
     "issue": "User型から表示名を生成する formatDisplayName が未実装です。",
     "acceptanceCriteria": [
-      "firstName と lastName がある場合は `lastName firstName` を返す",
-      "firstName のみある場合は firstName を返す",
-      "どちらもない場合は `Unknown User` を返す"
+      "nickName がある場合は nickName を返す",
+      "nickName がない場合は `firstName lastName` の形式で返す",
+      "既存の User 型と formatDisplayName の関数シグネチャを変更しない"
     ],
     "outOfScope": [
       "多言語ロケール対応",
