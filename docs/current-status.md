@@ -17,7 +17,8 @@
 - PR #138で実PostgreSQL migration executor、`pg` driver、実DB integration testをmerge済み。
 - PR #140でDB-backedなAdmin Challenge Repositoryをasync DatabaseClientへ移行済み。
 - Issue #141 / PR #142で公開Challenge catalogの検索・絞り込みとJS/TS実践問題4件を実装中。
-- Linearは無料Issue上限のため、Issue #141はGitHub Issue / Repository docs / Notionを管理正本とする。
+- Issue #143でSQL / Python / HTML-CSS向け言語別Runner contractを後続管理する。
+- Linearは無料Issue上限のため、Issue #141 / #143はGitHub Issue / Repository docs / Notionを管理正本とする。
 
 ## 現行runtime
 
@@ -26,6 +27,7 @@
 - Public Challenge Repositoryは`problems/examples/*/problem.json`を読むfile-backed実装。
 - Admin Challenge Repositoryは`challenges` / `challenge_versions`をDB-backedで管理し、async DatabaseClientを使用する。
 - Submission / lease / outbox Repositoryは引き続き同期SQLite固有APIへ依存する。
+- Worker isolation runnerはvisible / hidden test pathを`node --test`へ渡すNode系runner。
 - API / Workerの各SQLite接続へ5秒の有限`busy_timeout`を設定している。
 - GitHub ActionsではPostgreSQL 18.4 service containerによる実DB integration testを実行する。
 - RDS、ECS、Secrets Manager resourceは未作成。
@@ -48,14 +50,14 @@
 - `ts-feature-access-policy`: medium / feature / TypeScript
 - `ts-refactor-feature-flags`: hard / refactor / TypeScript
 
-変更後: 7件。
+File-backed contentとしては変更後7件。
 
 ### 問題一覧
 
 - title / slugのkeyword部分一致。
 - difficulty: easy / medium / hard。
 - category: bugfix / feature / sql / refactor。
-- language: javascript / typescript / sql。
+- language filterは現行Runnerで採点確認済みのjavascript / typescriptのみ。
 - 複合filter対応。
 - GET query stringで条件を保持。
 - 一致0件のempty state。
@@ -65,11 +67,20 @@
 - query値をinput属性へ戻すため`"` / `'`を含むHTML attribute escapeを行う。
 - 問題詳細の誤った`metadata.type`参照を正式な`metadata.category`へ修正。
 
-### 言語公開境界
+### 採点可能言語の境界
 
-Problem schemaは`python` / `html-css`も予約しているが、現行Worker isolation runnerはNode test runner前提。
+実行経路を再確認した結果、現行WorkerでPR #142の実Challenge contractまで確認できているのはJavaScript / TypeScript。
 
-そのため公開catalogへ表示する対応言語は、現時点で採点可能性を確認できるJavaScript / TypeScript / SQLに限定する。Python / HTML-CSSはRunner実装と実行契約テスト完了後に別Issueで公開する。
+既存`sql-monthly-sales`はProblem JSON上の`testCommand`が`python run_sql_tests.py`、`runCommand`が`sqlite3`前提だが、現行Workerはそのcommandを実行せず`node --test`固定であるため、SQLは現時点で安全に採点できない。
+
+そのためPR #142ではfail-closedにする。
+
+- JavaScript / TypeScript: 一覧から問題を開き、提出可能。
+- SQL: contentは残すが一覧actionは「採点準備中」。詳細でも提出formを出さない。
+- `/submit`へSQL等の未対応languageを直接POSTしてもWeb側で400拒否し、APIへforwardしない。
+- Python / HTML-CSS: Runner未実装のため公開filter候補へ出さない。
+
+SQL / Python / HTML-CSS RunnerはIssue #143で別実装する。
 
 ### Content contract test
 
@@ -114,6 +125,7 @@ Problem schemaは`python` / `html-css`も予約しているが、現行Worker is
 - Queue / DB内部状態やhidden testsをlearnerへ返さない。
 - API processでsubmission codeを直接実行しない。
 - Public catalogへ採点不能言語を対応済みとして表示しない。
+- Problem JSON由来の任意commandをshellへ直接渡すRunnerへ拡張しない。
 - Query parameterをHTMLへ埋め込む前にescapeする。
 - Migration checksum driftを自動修復しない。
 - SQL、parameters、credentials、submitted code、hidden testsを新規ログへ出力しない。
@@ -121,8 +133,7 @@ Problem schemaは`python` / `html-css`も予約しているが、現行Worker is
 
 ## 現時点の非対応
 
-- Python Challenge Runner / Python Challenge公開
-- HTML/CSS評価Runner / Frontend Challenge公開
+- SQL / Python / HTML-CSS言語別Runner（Issue #143）
 - Public Challenge RepositoryのDB-backed化
 - Submission read / simple writeのasync DatabaseClient移行
 - Processing lease / attempt fencingのasync移行
@@ -139,11 +150,10 @@ Problem schemaは`python` / `html-css`も予約しているが、現行Worker is
 
 ユーザー価値の次候補:
 
-1. Python Runner + Python実践Challenge。
-2. Challenge tag / 学習トラック。
+1. Issue #143: SQL / Python / HTML-CSS言語別Runner contract。
+2. Challenge tag検索 / 学習トラック。
 3. おすすめChallenge / 次に解く問題。
 4. 進捗ページを実submissionデータへ接続。
-5. HTML/CSS評価Runner + Frontend Challenge。
 
 基盤依存順:
 
@@ -160,6 +170,7 @@ Problem schemaは`python` / `html-css`も予約しているが、現行Worker is
 
 - Issue #141: `https://github.com/mizzz-ivr/ai-code-dojo/issues/141`
 - PR #142: `https://github.com/mizzz-ivr/ai-code-dojo/pull/142`
+- Issue #143: `https://github.com/mizzz-ivr/ai-code-dojo/issues/143`
 - Public Challenge catalog: `docs/architecture/public-challenge-catalog.md`
 - Issue #139: `https://github.com/mizzz-ivr/ai-code-dojo/issues/139`
 - PR #140: `https://github.com/mizzz-ivr/ai-code-dojo/pull/140`
