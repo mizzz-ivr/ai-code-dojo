@@ -1,0 +1,39 @@
+ai-code-dojoのAdmin Challenge Repositoryをasync DatabaseClientへ移行してください。
+
+前提:
+- PR #138までmerge済み
+- DatabaseClient contract / SQLite adapter / PostgreSQL adapterが存在する
+- PostgreSQL 18.4の実DB integration環境が存在する
+- Production runtimeはSQLite / HTTPを維持する
+- 公開Challenge Repositoryはproblems/examplesのfile-backed実装であり、今回変更しない
+
+要件:
+1. admin-challenge-repository.mjsからgetDb / prepare / runへの直接依存を除去する
+2. createAdminChallengeRepository({ databaseClient })を追加する
+3. 既存export名とAPI contractを維持する
+4. Challenge作成とVersion 1 INSERTを同一transactionで処理する
+5. Version追加とcurrent_version_id更新を同一transactionで処理する
+6. Challenge versionは上書きせず追加する
+7. 同一Challengeの同時Version追加を安全に直列化する
+8. SQLite / PostgreSQLへ同じRepository contract testを適用する
+9. 実PostgreSQLで同時Version追加を検証する
+10. hidden testsをlearner向け公開境界へ露出しない
+11. Production providerをPostgreSQLへ切り替えない
+12. Submission / lease / outbox / RDS / ECSを混ぜない
+
+テスト観点:
+- empty list
+- create / Version 1
+- duplicate slug
+- Version append
+- current version pointer
+- previous version preservation
+- publish / draft
+- published slug lookup
+- missing resource
+- create rollback
+- concurrent version append
+- existing API regression
+- lint / typecheck / unit / integration / schema / infra / docs / build
+
+PR、コミット、docsは日本語で記述し、ブランチ名にcodexを含めないでください。
