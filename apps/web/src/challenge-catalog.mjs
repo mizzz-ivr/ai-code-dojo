@@ -1,8 +1,11 @@
+export const RUNNABLE_CHALLENGE_LANGUAGES = Object.freeze(['javascript', 'typescript']);
+
 export const CHALLENGE_CATALOG_OPTIONS = Object.freeze({
   difficulties: Object.freeze(['easy', 'medium', 'hard']),
   categories: Object.freeze(['bugfix', 'feature', 'sql', 'refactor']),
-  // Problem schema上はpython/html-cssも予約済みだが、現行Workerで採点可能な言語だけを公開UIへ出す。
-  languages: Object.freeze(['javascript', 'typescript', 'sql'])
+  // Problem schemaや既存contentに他言語が存在しても、現行Workerで採点可能性を
+  // integration確認できる言語だけをfilter候補へ出す。
+  languages: RUNNABLE_CHALLENGE_LANGUAGES
 });
 
 const normalizeKeyword = (value) => String(value ?? '').trim().slice(0, 80);
@@ -23,6 +26,13 @@ export const readChallengeCatalogFilters = (searchParams) => {
     category: normalizeEnum(searchParams.get('category'), CHALLENGE_CATALOG_OPTIONS.categories),
     language: normalizeEnum(searchParams.get('language'), CHALLENGE_CATALOG_OPTIONS.languages)
   });
+};
+
+export const isChallengeRunnable = (challenge) => {
+  const languages = challenge?.supportedLanguages ?? challenge?.metadata?.supportedLanguages ?? [];
+  return Array.isArray(languages)
+    && languages.length > 0
+    && languages.every((language) => RUNNABLE_CHALLENGE_LANGUAGES.includes(language));
 };
 
 const includesKeyword = (challenge, keyword) => {
