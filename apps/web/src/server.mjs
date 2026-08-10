@@ -1,5 +1,10 @@
 import http from 'node:http';
 import { readWebSession, buildWebSessionCookie, clearWebSessionCookie } from './auth.mjs';
+import {
+  CHALLENGE_CATALOG_OPTIONS,
+  filterChallenges,
+  readChallengeCatalogFilters
+} from './challenge-catalog.mjs';
 
 const port = Number(process.env.WEB_PORT ?? 3000);
 const apiBaseUrl = process.env.API_BASE_URL ?? 'http://localhost:8080';
@@ -22,8 +27,9 @@ const parseFormBody = async (req) => {
 const escapeHtml = (value = '') => String(value)
   .replaceAll('&', '&amp;')
   .replaceAll('<', '&lt;')
-  .replaceAll('>', '&gt;');
-
+  .replaceAll('>', '&gt;')
+  .replaceAll('"', '&quot;')
+  .replaceAll("'", '&#39;');
 
 const redirect = (res, location) => { res.writeHead(302, { location }); res.end(); };
 const renderLoginPage = (errorMessage = '') => renderLayout({
@@ -81,9 +87,14 @@ const renderLayout = ({ title, activePath, content, admin = false }) => `<!docty
   table { width: 100%; border-collapse: collapse; }
   td, th { text-align: left; border-bottom: 1px solid #eaecf0; padding: 10px 8px; vertical-align: top; }
   textarea { width: 100%; min-height: 180px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
-  input[type="text"] { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #d0d5dd; }
+  input[type="text"], select { box-sizing: border-box; width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #d0d5dd; background: #fff; }
   pre { background: #f8fafc; border: 1px solid #e4e7ec; border-radius: 8px; padding: 12px; overflow: auto; }
   .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .filters { display: grid; grid-template-columns: minmax(220px, 2fr) repeat(3, minmax(140px, 1fr)); gap: 12px; margin: 16px 0 12px; align-items: end; }
+  .filter-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; }
+  .filter-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .table-wrap { overflow-x: auto; }
+  @media (max-width: 760px) { .filters { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -106,9 +117,13 @@ const safeJsonParse = (raw, fallback) => {
   try { return JSON.parse(raw); } catch { return fallback; }
 };
 
+const renderFilterOptions = (values, selectedValue) => [
+  '<option value="">すべて</option>',
+  ...values.map((value) => `<option value="${escapeHtml(value)}"${value === selectedValue ? ' selected' : ''}>${escapeHtml(value)}</option>`)
+].join('');
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
-
 
   if (req.method === 'GET' && url.pathname === '/login') {
     return sendHtml(res, 200, renderLoginPage());
@@ -242,18 +257,31 @@ const server = http.createServer(async (req, res) => {
         return sendHtml(res, 200, renderLayout({ title: '問題一覧', activePath: '/', content: renderStateCard('warn', '公開中の問題はまだありません。') }));
       }
 
-      const rows = challenges.map((challenge) => `<tr>
+      const filters = readChallengeCatalogFilters(url.searchParams);
+      const filteredChallenges = filterChallenges(challenges, filters);
+      const rows = filteredChallenges.map((challenge) => `<tr>
         <td><strong>${escapeHtml(challenge.title)}</strong><br /><span class="muted">${escapeHtml(challenge.slug)}</span></td>
         <td>${escapeHtml(challenge.difficulty)}</td>
         <td>${escapeHtml(challenge.category)}</td>
         <td>${escapeHtml((challenge.supportedLanguages ?? []).join(', '))}</td>
         <td><a class="cta" href="/challenges/${encodeURIComponent(challenge.slug)}">問題を開く</a></td>
       </tr>`).join('');
+      const resultRows = rows || '<tr><td colspan="5" class="muted">条件に一致する問題がありません。条件を変更して再検索してください。</td></tr>';
 
       return sendHtml(res, 200, renderLayout({
         title: '問題一覧',
         activePath: '/',
-        content: `<section class="card"><h1>問題一覧</h1><p class="muted">難易度や言語を確認して、1問ずつ確実に進めましょう。</p><table><tr><th>問題</th><th>難易度</th><th>カテゴリ</th><th>対応言語</th><th></th></tr>${rows}</table></section>`
+        content: `<section class="card"><h1>問題一覧</h1><p class="muted">キーワード・難易度・カテゴリ・言語から、今取り組みたい問題を絞り込めます。</p>
+        <form method="GET" action="/">
+          <div class="filters">
+            <label class="filter-field">キーワード<input type="text" name="q" maxlength="80" value="${escapeHtml(filters.keyword)}" placeholder="タイトル・slugを検索" /></label>
+            <label class="filter-field">難易度<select name="difficulty">${renderFilterOptions(CHALLENGE_CATALOG_OPTIONS.difficulties, filters.difficulty)}</select></label>
+            <label class="filter-field">カテゴリ<select name="category">${renderFilterOptions(CHALLENGE_CATALOG_OPTIONS.categories, filters.category)}</select></label>
+            <label class="filter-field">言語<select name="language">${renderFilterOptions(CHALLENGE_CATALOG_OPTIONS.languages, filters.language)}</select></label>
+          </div>
+          <div class="filter-actions"><button class="cta" type="submit">絞り込む</button><a class="cta secondary" href="/">条件をクリア</a><span class="muted">${filteredChallenges.length}/${challenges.length}件を表示</span></div>
+        </form>
+        <div class="table-wrap"><table><tr><th>問題</th><th>難易度</th><th>カテゴリ</th><th>対応言語</th><th></th></tr>${resultRows}</table></div></section>`
       }));
     } catch {
       return sendHtml(res, 502, renderLayout({ title: '問題一覧', activePath: '/', content: renderStateCard('fail', 'API通信エラーが発生しました。') }));
@@ -275,7 +303,7 @@ const server = http.createServer(async (req, res) => {
         title: challenge.metadata.title,
         activePath: '/',
         content: `<section class="card"><h1>${escapeHtml(challenge.metadata.title)}</h1>
-        <p><span class="badge ok">${escapeHtml(challenge.metadata.difficulty)}</span><span class="badge warn">${escapeHtml(challenge.metadata.type)}</span></p>
+        <p><span class="badge ok">${escapeHtml(challenge.metadata.difficulty)}</span><span class="badge warn">${escapeHtml(challenge.metadata.category)}</span></p>
         <p><strong>編集対象:</strong> ${escapeHtml(challenge.starterCode.find((file) => !file.readonly)?.path ?? 'N/A')}</p>
         <p class="muted">${escapeHtml(challenge.statement.background)}</p>
         <p><strong>課題:</strong> ${escapeHtml(challenge.statement.issue)}</p>
