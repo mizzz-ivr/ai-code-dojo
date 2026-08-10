@@ -1,0 +1,25 @@
+mizzz-ivr/ai-code-dojo の公開Challenge catalogを拡充してください。
+
+目的:
+- 学習者が問題を探しやすくする
+- Challengeコンテンツを増やす
+- 実際に現行Runnerで採点できる問題だけを公開する
+
+必須:
+- 既存Problem schema / Challenge Repository / Worker runnerを確認してから対象言語を決める
+- keyword / difficulty / category / language filterは既存summaryで実現できるならAPIを不要に拡張しない
+- filterはGET query stringに保持する
+- 未知filter値を500にしない
+- query値をHTMLへ埋め込む場合は属性値もescapeする
+- visible / hidden testを分離する
+- starterが最初から全testを通らないことを確認する
+- reference solutionでvisible / hidden testを通せることをintegrationで保証する
+- Node test runner配下から子node --testを起動するときはNODE_TEST_CONTEXTの継承による再帰skipに注意する
+- hidden testsをlearnerへ公開しない
+- APIでsubmission codeを直接実行しない
+- Production SQLite / HTTPを変更しない
+- Submission / lease / outboxの変更を混ぜない
+
+現行WorkerがNode test runnerのみであれば、Python / HTML-CSSをschema上の対応可能性だけで公開Challengeへ追加しない。先にRunner実装と実行契約テストを別Issueで行う。
+
+PR / commit / docsは日本語。Branch名にcodexを含めない。変更差分を小さくし、lint / typecheck / unit / integration / schema / infra / docs / buildをすべて確認する。
