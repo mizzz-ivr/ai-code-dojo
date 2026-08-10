@@ -17,7 +17,13 @@
 - 公開language filterをJavaScript / TypeScriptに限定
 - 詳細画面の`metadata.category`表示修正
 - HTML attribute escape強化
-- filter / runnability unit test
+- `runner-sdk`へJS/TS共通language policyを追加
+- Web / API / Workerで同じrunner allowlistを利用
+- API submission作成前にChallenge存在・slug・languageを検証
+- SQL等の未対応languageをsubmission / outbox永続化前に拒否
+- Workerでもlegacy/internal queue経路をfail-closed
+- TypeScriptをAPI → queue → Worker → visible / hidden testsまでE2E確認
+- filter / runnability / submission target unit test
 - 新規Challenge content contract integration test
 - 子`node --test`から`NODE_TEST_CONTEXT`を除外し、再帰test skipを防止
 - SQL等の採点未対応ChallengeをWebでfail-closed
@@ -32,11 +38,21 @@
 - `ts-feature-access-policy`
 - `ts-refactor-feature-flags`
 
-## 発見した既存課題
+## 発見・修正した既存課題
 
-`sql-monthly-sales`はProblem JSONでPython / SQLite commandを定義しているが、現行Workerは`node --test`固定のためSQLを安全に採点できない。
+### SQL
 
-Python / HTML-CSSもschema定義だけが先行している。SQL / Python / HTML-CSSの言語別RunnerはIssue #143で実装する。
+`sql-monthly-sales`はProblem JSONでPython / SQLite commandを定義しているが、現行Node系runnerはそのcommandを実行しないためSQLを安全に採点できない。
+
+SQL / Python / HTML-CSSの言語別RunnerはIssue #143で実装する。PR #142では削除せず「採点準備中」としてfail-closedにする。
+
+### TypeScript
+
+Workerは従来`language !== 'javascript'`を明示拒否していた。Node 22でTypeScript testが実行可能でも本番経路では拒否されるため、Worker判定を共通runner policyへ移行し、TypeScriptを実E2Eで確認した。
+
+### Infra failure test fixture
+
+旧integrationは存在しないChallengeをPublic APIから作成してWorker障害を誘発していた。API存在検証を弱めず、内部Repositoryでfixtureを作成し正規queue messageとしてWorkerへ投入する方式へ変更した。
 
 ## 守る境界
 
@@ -45,16 +61,24 @@ Python / HTML-CSSもschema定義だけが先行している。SQL / Python / HTM
 - hidden test sourceをlearner向けAPI/UIへ返さない。
 - Public Challengeはfile-backedを維持する。
 - APIでsubmission codeを直接実行しない。
-- Submission / processing lease / attempt fencing / outboxを本PRへ混ぜない。
+- Submission + outbox atomic transactionを変更しない。
+- processing lease / attempt fencing / completion guardを変更しない。
 - Production runtimeはSQLite / HTTPのまま。
 
-## 次の確認
+## 確認済みquality gate
 
-1. 最新headの全quality gateを確認する。
-2. PR差分をself-reviewする。
-3. PR本文へSQL既存不整合・fail-closed・最終CIを記載する。
-4. Issue #141 / Notionを同期する。
-5. Ready for reviewへ移行する。
+Code head `670bca84bb8a7dcabf84a68687493ee8cbaa6378`で以下を確認済み。
+
+- Lint: Success
+- Typecheck: Success
+- Unit test: Success
+- Integration test: Success
+- Schema validation: Success
+- Infra validation: Success
+- Build: Success
+- TypeScript API → Worker E2E: Success
+
+最新docs headでも最終CIを再確認してからReadyへ移行する。
 
 ## 後続候補
 
