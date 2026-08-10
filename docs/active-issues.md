@@ -47,6 +47,7 @@
 - Workerでもlegacy / internal queue経路を同じpolicyでfail-closed。
 - TypeScriptをAPI → queue → Worker → visible / hidden testまでE2E確認。
 - SQL等の採点未対応Challengeを一覧 / 詳細 / Web POST / API / Workerでfail-closed。
+- Submission APIの非2xx / 通信失敗 / id欠落をWebで安全に表示し、`/submissions/undefined`への遷移を防止。
 
 #### 追加Challenge
 
@@ -71,10 +72,23 @@ SQL / Python / HTML-CSS RunnerはIssue #143へ分離する。
 3. Workerが`language !== 'javascript'`を固定拒否していたため、共通policyへ変更しTypeScript E2Eを追加。
 4. Webだけの言語guardは直接API呼び出しで迂回できたため、APIでChallenge存在・対応言語・runner allowlistを永続化前に検証。
 5. 旧infra failure integrationが存在しないChallengeのPublic API作成に依存していたため、内部Repository fixture + 正規queue messageへ変更。
+6. 自動レビューP1で、既存`ts-feature-user-display`が拡張子なしimportにより`ERR_MODULE_NOT_FOUND`となり得る問題を検出。`.ts`拡張子を明示し、Problem statementとtest契約も整合させた。
+7. 自動レビューP2で、Submission APIの400/404時にWebが`/submissions/undefined`へredirectする問題を検出。API response clientを追加し、非2xx時はエラー表示してredirectしないよう修正した。
+
+#### レビュー対応
+
+- Codex Review: 1回実施。
+- P1: 既存TypeScript Challengeの実行契約不整合 → 修正済み。
+- P2: Submission検証エラーのWeb表示漏れ → 修正済み。
+- `ts-feature-user-display`をcontent contractへ追加し、starter failure / reference solution successを確認。
+- `ts-feature-user-display`専用のAPI → queue → Worker E2Eを追加。
+- Submission API 400時のWeb実HTTP integration testを追加し、400表示・Locationなし・`/submissions/undefined`非出現を確認。
+- 2件のinline review threadへ修正内容を返信し、両方resolve済み。
+- 未解決inline review thread: 0件。
 
 #### 最終確認結果
 
-Head `11d1d556d93a76e08c7327898599c4b463fb39d6`で以下が成功済み。
+レビュー修正後のcode headで以下が成功済み。
 
 - Docs validation: Success
 - Frozen lockfile install: Success
@@ -83,6 +97,8 @@ Head `11d1d556d93a76e08c7327898599c4b463fb39d6`で以下が成功済み。
 - Unit test: Success
 - Integration test: Success
 - TypeScript API → Worker E2E: Success
+- 既存`ts-feature-user-display` API → Worker E2E: Success
+- Submission API error → Web error表示 integration: Success
 - Schema validation: Success
 - Infra validation: Success
 - Build: Success
@@ -100,6 +116,7 @@ Head `11d1d556d93a76e08c7327898599c4b463fb39d6`で以下が成功済み。
 - 採点未対応言語を対応済みfilter候補にしない。
 - 採点未対応ChallengeからWeb / API経由でsubmissionを作成できない。
 - TypeScriptを実Worker経路で採点できる。
+- Submission APIのvalidation errorをWebで正しく表示できる。
 - hidden test sourceをlearnerへ露出しない。
 - Submission + outbox atomicity / lease / fencing / completion guardを変更しない。
 - Production runtimeをSQLite / HTTPのまま維持する。
