@@ -1,7 +1,8 @@
 export const CHALLENGE_CATALOG_OPTIONS = Object.freeze({
   difficulties: Object.freeze(['easy', 'medium', 'hard']),
   categories: Object.freeze(['bugfix', 'feature', 'sql', 'refactor']),
-  languages: Object.freeze(['javascript', 'typescript', 'python', 'sql', 'html-css'])
+  // Problem schema上はpython/html-cssも予約済みだが、現行Workerで採点可能な言語だけを公開UIへ出す。
+  languages: Object.freeze(['javascript', 'typescript', 'sql'])
 });
 
 const normalizeKeyword = (value) => String(value ?? '').trim().slice(0, 80);
