@@ -2,7 +2,9 @@ import http from 'node:http';
 import { readWebSession, buildWebSessionCookie, clearWebSessionCookie } from './auth.mjs';
 import {
   CHALLENGE_CATALOG_OPTIONS,
+  RUNNABLE_CHALLENGE_LANGUAGES,
   filterChallenges,
+  isChallengeRunnable,
   readChallengeCatalogFilters
 } from './challenge-catalog.mjs';
 
@@ -259,19 +261,25 @@ const server = http.createServer(async (req, res) => {
 
       const filters = readChallengeCatalogFilters(url.searchParams);
       const filteredChallenges = filterChallenges(challenges, filters);
-      const rows = filteredChallenges.map((challenge) => `<tr>
+      const rows = filteredChallenges.map((challenge) => {
+        const runnable = isChallengeRunnable(challenge);
+        const action = runnable
+          ? `<a class="cta" href="/challenges/${encodeURIComponent(challenge.slug)}">問題を開く</a>`
+          : '<span class="badge warn">採点準備中</span>';
+        return `<tr>
         <td><strong>${escapeHtml(challenge.title)}</strong><br /><span class="muted">${escapeHtml(challenge.slug)}</span></td>
         <td>${escapeHtml(challenge.difficulty)}</td>
         <td>${escapeHtml(challenge.category)}</td>
         <td>${escapeHtml((challenge.supportedLanguages ?? []).join(', '))}</td>
-        <td><a class="cta" href="/challenges/${encodeURIComponent(challenge.slug)}">問題を開く</a></td>
-      </tr>`).join('');
+        <td>${action}</td>
+      </tr>`;
+      }).join('');
       const resultRows = rows || '<tr><td colspan="5" class="muted">条件に一致する問題がありません。条件を変更して再検索してください。</td></tr>';
 
       return sendHtml(res, 200, renderLayout({
         title: '問題一覧',
         activePath: '/',
-        content: `<section class="card"><h1>問題一覧</h1><p class="muted">キーワード・難易度・カテゴリ・言語から、今取り組みたい問題を絞り込めます。</p>
+        content: `<section class="card"><h1>問題一覧</h1><p class="muted">キーワード・難易度・カテゴリ・言語から、今取り組みたい問題を絞り込めます。採点基盤が未対応の問題は提出導線を停止しています。</p>
         <form method="GET" action="/">
           <div class="filters">
             <label class="filter-field">キーワード<input type="text" name="q" maxlength="80" value="${escapeHtml(filters.keyword)}" placeholder="タイトル・slugを検索" /></label>
@@ -299,6 +307,16 @@ const server = http.createServer(async (req, res) => {
         return sendHtml(res, 502, renderLayout({ title: '問題詳細', activePath: '/', content: renderStateCard('fail', '問題詳細の取得に失敗しました。') }));
       }
       const { challenge } = await response.json();
+      const runnable = isChallengeRunnable(challenge);
+      const submitArea = runnable
+        ? `<form method="POST" action="/submit">
+          <input type="hidden" name="challengeSlug" value="${escapeHtml(challenge.metadata.slug)}" />
+          <input type="hidden" name="language" value="${escapeHtml(challenge.metadata.supportedLanguages[0])}" />
+          <textarea name="code">${escapeHtml(challenge.starterCodeContent)}</textarea>
+          <p><button class="cta" type="submit">提出する</button> <a class="cta secondary" href="/">一覧へ戻る</a></p>
+        </form>`
+        : `<div class="warn card"><strong>採点準備中</strong><p>この言語は現行Runnerでの採点契約が未整備のため、提出を一時停止しています。</p><a class="cta secondary" href="/">一覧へ戻る</a></div>`;
+
       return sendHtml(res, 200, renderLayout({
         title: challenge.metadata.title,
         activePath: '/',
@@ -308,12 +326,7 @@ const server = http.createServer(async (req, res) => {
         <p class="muted">${escapeHtml(challenge.statement.background)}</p>
         <p><strong>課題:</strong> ${escapeHtml(challenge.statement.issue)}</p>
         <h3>acceptance criteria</h3><ul>${challenge.statement.acceptanceCriteria.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
-        <form method="POST" action="/submit">
-          <input type="hidden" name="challengeSlug" value="${escapeHtml(challenge.metadata.slug)}" />
-          <input type="hidden" name="language" value="${escapeHtml(challenge.metadata.supportedLanguages[0])}" />
-          <textarea name="code">${escapeHtml(challenge.starterCodeContent)}</textarea>
-          <p><button class="cta" type="submit">提出する</button> <a class="cta secondary" href="/">一覧へ戻る</a></p>
-        </form></section>`
+        ${submitArea}</section>`
       }));
     } catch {
       return sendHtml(res, 502, renderLayout({ title: '問題詳細', activePath: '/', content: renderStateCard('fail', 'API通信エラーが発生しました。') }));
@@ -327,6 +340,14 @@ const server = http.createServer(async (req, res) => {
       language: form.get('language'),
       code: form.get('code')
     };
+
+    if (!RUNNABLE_CHALLENGE_LANGUAGES.includes(payload.language)) {
+      return sendHtml(res, 400, renderLayout({
+        title: '提出エラー',
+        activePath: '/',
+        content: renderStateCard('warn', 'この言語は現在の採点Runnerでは提出できません。')
+      }));
+    }
 
     const response = await fetch(`${apiBaseUrl}/api/submissions`, {
       method: 'POST',
