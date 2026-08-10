@@ -1,4 +1,9 @@
-export const RUNNABLE_CHALLENGE_LANGUAGES = Object.freeze(['javascript', 'typescript']);
+import {
+  RUNNABLE_CHALLENGE_LANGUAGES,
+  isChallengeRunnable
+} from '../../../packages/runner-sdk/src/language-policy.mjs';
+
+export { RUNNABLE_CHALLENGE_LANGUAGES, isChallengeRunnable };
 
 export const CHALLENGE_CATALOG_OPTIONS = Object.freeze({
   difficulties: Object.freeze(['easy', 'medium', 'hard']),
@@ -26,13 +31,6 @@ export const readChallengeCatalogFilters = (searchParams) => {
     category: normalizeEnum(searchParams.get('category'), CHALLENGE_CATALOG_OPTIONS.categories),
     language: normalizeEnum(searchParams.get('language'), CHALLENGE_CATALOG_OPTIONS.languages)
   });
-};
-
-export const isChallengeRunnable = (challenge) => {
-  const languages = challenge?.supportedLanguages ?? challenge?.metadata?.supportedLanguages ?? [];
-  return Array.isArray(languages)
-    && languages.length > 0
-    && languages.every((language) => RUNNABLE_CHALLENGE_LANGUAGES.includes(language));
 };
 
 const includesKeyword = (challenge, keyword) => {
