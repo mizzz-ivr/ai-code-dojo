@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  CHALLENGE_CATALOG_OPTIONS,
   filterChallenges,
   readChallengeCatalogFilters
 } from '../../apps/web/src/challenge-catalog.mjs';
@@ -19,6 +20,12 @@ test('catalog filterをquery stringから正規化する', () => {
     category: 'feature',
     language: 'typescript'
   });
+});
+
+test('公開言語候補は現行Workerで採点可能な範囲に限定する', () => {
+  assert.deepEqual(CHALLENGE_CATALOG_OPTIONS.languages, ['javascript', 'typescript', 'sql']);
+  const filters = readChallengeCatalogFilters(new URLSearchParams('language=python'));
+  assert.equal(filters.language, '');
 });
 
 test('未知のenum filterは無効化して500要因にしない', () => {
