@@ -1,0 +1,47 @@
+{
+  "metadata": {
+    "title": "ページネーション表示範囲の境界値バグ修正",
+    "slug": "js-bugfix-pagination-window",
+    "difficulty": "hard",
+    "category": "bugfix",
+    "supportedLanguages": ["javascript"],
+    "framework": "node",
+    "tags": ["bugfix", "pagination", "boundary-value"]
+  },
+  "statement": {
+    "background": "管理画面のページネーションで先頭・末尾付近だけ表示するページ番号が不足する不具合が発生しています。",
+    "issue": "buildPageWindow は中央ページだけを前提に開始位置を計算しており、端に寄ったときにmaxItems件を維持できません。",
+    "acceptanceCriteria": [
+      "中央ではcurrentPageを中心に連続したページ番号を返す",
+      "先頭・末尾付近でも可能な限りmaxItems件を返す",
+      "totalPagesがmaxItems未満なら1からtotalPagesまでを返す",
+      "currentPageが範囲外でも1からtotalPagesへclampする",
+      "重複・0以下・totalPages超過のページ番号を返さない"
+    ],
+    "outOfScope": ["無限スクロール", "URL query parameterの生成"]
+  },
+  "learningPoints": [
+    "境界値から不具合の再現条件を特定する",
+    "中央・先頭・末尾を同じロジックで扱う"
+  ],
+  "starterCode": [
+    {"path": "starter/pagination.js", "readonly": false},
+    {"path": "tests/visible/pagination.visible.test.js", "readonly": true}
+  ],
+  "visibleTests": ["tests/visible/pagination.visible.test.js"],
+  "hiddenTests": ["tests/hidden/pagination.hidden.test.js"],
+  "runnerConfig": {
+    "buildCommand": "echo 'no build required'",
+    "testCommand": "node --test tests/visible/pagination.visible.test.js tests/hidden/pagination.hidden.test.js",
+    "runCommand": "node starter/pagination.js",
+    "timeoutSeconds": 5,
+    "networkAccess": "disabled"
+  },
+  "reviewConfig": {
+    "prTitleTemplate": "fix(problem): js-bugfix-pagination-window の境界値不具合を修正",
+    "prBodyTemplate": "再現条件・境界値・修正アルゴリズム・確認結果を日本語で記載する",
+    "reviewerCommentTemplates": ["先頭・末尾・範囲外currentPageの境界値を確認してください。"],
+    "language": "ja",
+    "focusPoints": ["境界値", "アルゴリズム", "テスト"]
+  }
+}
