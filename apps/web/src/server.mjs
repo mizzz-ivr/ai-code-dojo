@@ -7,6 +7,7 @@ import {
   isChallengeRunnable,
   readChallengeCatalogFilters
 } from './challenge-catalog.mjs';
+import { submitChallengeToApi } from './submission-api-client.mjs';
 
 const port = Number(process.env.WEB_PORT ?? 3000);
 const apiBaseUrl = process.env.API_BASE_URL ?? 'http://localhost:8080';
@@ -349,14 +350,20 @@ const server = http.createServer(async (req, res) => {
       }));
     }
 
-    const response = await fetch(`${apiBaseUrl}/api/submissions`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload)
+    const submissionResult = await submitChallengeToApi({
+      apiBaseUrl,
+      payload
     });
-    const submission = await response.json();
 
-    res.writeHead(302, { location: `/submissions/${submission.id}` });
+    if (!submissionResult.ok) {
+      return sendHtml(res, submissionResult.statusCode, renderLayout({
+        title: '提出エラー',
+        activePath: '/',
+        content: `${renderStateCard('fail', submissionResult.error)}<section class="card"><a class="cta secondary" href="/challenges/${encodeURIComponent(payload.challengeSlug ?? '')}">問題へ戻る</a></section>`
+      }));
+    }
+
+    res.writeHead(302, { location: `/submissions/${submissionResult.id}` });
     return res.end();
   }
 
