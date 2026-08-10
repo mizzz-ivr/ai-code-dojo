@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import process from 'node:process';
 import { spawnSync } from 'node:child_process';
 
 const challengeCases = [
@@ -83,11 +84,18 @@ export function resolveFeatureFlags(
   }
 ];
 
-const runTests = ({ cwd, files }) => spawnSync(
-  process.execPath,
-  ['--test', ...files],
-  { cwd, encoding: 'utf8', timeout: 15000 }
-);
+const runTests = ({ cwd, files }) => {
+  // このintegration test自身がnode:test配下で動くため、内部用NODE_TEST_CONTEXTを
+  // 子nodeへ渡すと再帰testとして全fileがskipされる。実Runner相当の独立processに戻す。
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+
+  return spawnSync(
+    process.execPath,
+    ['--test', ...files],
+    { cwd, encoding: 'utf8', timeout: 15000, env }
+  );
+};
 
 for (const challengeCase of challengeCases) {
   test(`${challengeCase.slug} は未解決starterと解決可能なtest contractを持つ`, async () => {
@@ -99,7 +107,11 @@ for (const challengeCase of challengeCases) {
 
     const allTests = [...problem.visibleTests, ...problem.hiddenTests];
     const starterResult = runTests({ cwd: sourceDirectory, files: allTests });
-    assert.notEqual(starterResult.status, 0, 'starter should not already satisfy all tests');
+    assert.notEqual(
+      starterResult.status,
+      0,
+      `starter should not already satisfy all tests\n${starterResult.stdout}\n${starterResult.stderr}`
+    );
 
     const temporaryRoot = await mkdtemp(path.join(tmpdir(), 'dojo-content-'));
     const workingDirectory = path.join(temporaryRoot, challengeCase.slug);
