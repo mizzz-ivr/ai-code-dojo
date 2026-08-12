@@ -17,11 +17,12 @@
 ### #143 SQL・Python・HTML/CSS向け言語別Runner contractを導入する
 
 - 優先度: P2
-- 状態: Open / PR #144 Draft → Ready移行前最終確認
+- 状態: Open / PR #144 Ready for review / mergeable
 - GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/143`
 - GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/144`
 - Branch: `feat/language-runner-contracts`
 - Linear: 無料Issue上限のためGitHub Issue / Repository docsを管理正本とする。
+- Ready移行時点のinline review thread: 0件。
 
 #### 目的
 
@@ -75,9 +76,9 @@ PythonはCI previewのみ。Public APIでは400で拒否する。
 5. Python Runnerの出力上限・非root・capability / privilege hardeningを追加。
 6. WorkerのRunner dispatchがChallenge先頭languageを暗黙推測していたため、Submission languageを明示伝播し回帰テストを追加。
 
-#### Code head確認
+#### 最終確認
 
-`a7c99aad7e26044c943bb423bcfd01f1d87c572d`で以下が成功済み。
+最終docs headで以下を成功確認済み。
 
 - Docs validation: Success。
 - Frozen lockfile install: Success。
@@ -93,6 +94,8 @@ PythonはCI previewのみ。Public APIでは400で拒否する。
 - Schema validation: Success。
 - Infra validation: Success。
 - Build: Success。
+- PR #144: Ready for review / mergeable。
+- Ready移行時点のinline review thread: 0件。
 
 #### 完了条件
 
