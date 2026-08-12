@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 
-export const PYTHON_RUNNER_IMAGE = 'python:3.14.6-alpine3.22';
+export const PYTHON_RUNNER_IMAGE = 'python:3.14.5-alpine3.22@sha256:6b91e66ab2a880ce9ca5a1b91c70f45963ff71ff68268df056336e1a657d5efd';
 
 const resolveWorkspacePath = (workingDirectory, relativePath) => {
   if (typeof relativePath !== 'string' || !relativePath || path.isAbsolute(relativePath)) {
