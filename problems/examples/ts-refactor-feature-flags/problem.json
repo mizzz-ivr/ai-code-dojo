@@ -1,0 +1,47 @@
+{
+  "metadata": {
+    "title": "Feature Flag上書き優先順位の安全なリファクタリング",
+    "slug": "ts-refactor-feature-flags",
+    "difficulty": "hard",
+    "category": "refactor",
+    "supportedLanguages": ["typescript"],
+    "framework": "node",
+    "tags": ["typescript", "refactor", "configuration"]
+  },
+  "statement": {
+    "background": "Feature Flagをdefault・account・userの3階層で上書きする処理に、undefined値で既定値が消える回帰があります。",
+    "issue": "resolveFeatureFlags が単純なobject spreadで上書きしており、値を指定していないoverrideのundefinedまで有効値として扱います。",
+    "acceptanceCriteria": [
+      "優先順位をuser > account > defaultsとして解決する",
+      "overrideがbooleanのときだけ値を上書きする",
+      "undefined overrideでは下位階層の値を維持する",
+      "defaults・accountOverrides・userOverridesを変更しない",
+      "戻り値は全flagがbooleanのFeatureFlagsを維持する"
+    ],
+    "outOfScope": ["動的なflag追加", "リモートFeature Flagサービス連携"]
+  },
+  "learningPoints": [
+    "undefinedと明示的なfalseを区別する",
+    "設定の優先順位をデータ非破壊で合成する"
+  ],
+  "starterCode": [
+    {"path": "starter/feature-flags.ts", "readonly": false},
+    {"path": "tests/visible/feature-flags.visible.test.ts", "readonly": true}
+  ],
+  "visibleTests": ["tests/visible/feature-flags.visible.test.ts"],
+  "hiddenTests": ["tests/hidden/feature-flags.hidden.test.ts"],
+  "runnerConfig": {
+    "buildCommand": "echo 'build is handled by runner image'",
+    "testCommand": "node --test tests/visible/feature-flags.visible.test.ts tests/hidden/feature-flags.hidden.test.ts",
+    "runCommand": "node starter/feature-flags.ts",
+    "timeoutSeconds": 5,
+    "networkAccess": "disabled"
+  },
+  "reviewConfig": {
+    "prTitleTemplate": "refactor(problem): ts-refactor-feature-flags の上書き処理を安全化",
+    "prBodyTemplate": "優先順位・undefinedの扱い・非破壊性・テスト結果を日本語で記載する",
+    "reviewerCommentTemplates": ["falseとundefinedを同一扱いしていないか確認してください。"],
+    "language": "ja",
+    "focusPoints": ["設定優先順位", "undefined", "非破壊性"]
+  }
+}

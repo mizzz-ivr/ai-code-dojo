@@ -1,0 +1,47 @@
+{
+  "metadata": {
+    "title": "ロール優先順位に基づくアクセスレベル判定",
+    "slug": "ts-feature-access-policy",
+    "difficulty": "medium",
+    "category": "feature",
+    "supportedLanguages": ["typescript"],
+    "framework": "node",
+    "tags": ["typescript", "feature", "authorization"]
+  },
+  "statement": {
+    "background": "社内管理画面でユーザーのロールと停止状態からアクセスレベルを決定する要件が追加されました。",
+    "issue": "getAccessLevel が仮実装のままで、ロール優先順位と停止ユーザーの扱いを反映できていません。",
+    "acceptanceCriteria": [
+      "suspendedユーザーはロールに関係なくblockedを返す",
+      "adminを含む場合はfullを返す",
+      "adminがなくeditorを含む場合はwriteを返す",
+      "viewerのみ・ロールなしではreadを返す",
+      "UserAccess型と関数シグネチャを維持する"
+    ],
+    "outOfScope": ["resource単位のACL", "外部IdP連携"]
+  },
+  "learningPoints": [
+    "優先順位のある業務ルールを分岐へ落とし込む",
+    "認可ロジックでdeny条件を先に評価する"
+  ],
+  "starterCode": [
+    {"path": "starter/access-policy.ts", "readonly": false},
+    {"path": "tests/visible/access-policy.visible.test.ts", "readonly": true}
+  ],
+  "visibleTests": ["tests/visible/access-policy.visible.test.ts"],
+  "hiddenTests": ["tests/hidden/access-policy.hidden.test.ts"],
+  "runnerConfig": {
+    "buildCommand": "echo 'build is handled by runner image'",
+    "testCommand": "node --test tests/visible/access-policy.visible.test.ts tests/hidden/access-policy.hidden.test.ts",
+    "runCommand": "node starter/access-policy.ts",
+    "timeoutSeconds": 5,
+    "networkAccess": "disabled"
+  },
+  "reviewConfig": {
+    "prTitleTemplate": "feat(problem): ts-feature-access-policy の認可判定を実装",
+    "prBodyTemplate": "優先順位・deny条件・実装内容・テスト結果を日本語で記載する",
+    "reviewerCommentTemplates": ["suspendedが最優先でdenyされることを確認してください。"],
+    "language": "ja",
+    "focusPoints": ["認可", "優先順位", "型"]
+  }
+}

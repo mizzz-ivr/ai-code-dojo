@@ -1,0 +1,46 @@
+{
+  "metadata": {
+    "title": "注文サマリーの副作用を除去するリファクタリング",
+    "slug": "js-refactor-order-summary",
+    "difficulty": "medium",
+    "category": "refactor",
+    "supportedLanguages": ["javascript"],
+    "framework": "node",
+    "tags": ["refactor", "array", "immutability"]
+  },
+  "statement": {
+    "background": "注文一覧APIの集計処理が別画面の表示順まで変えてしまう回帰が報告されています。",
+    "issue": "summarizeOrders は集計前に受け取った配列を直接sortしており、呼び出し元データへ副作用を発生させます。",
+    "acceptanceCriteria": [
+      "paid件数・pending件数・paid金額合計を正しく返す",
+      "cancelledなど対象外statusは集計しない",
+      "入力されたorders配列と要素の順序を変更しない",
+      "既存の関数シグネチャを変更しない"
+    ],
+    "outOfScope": ["通貨換算", "不正なamountの入力バリデーション"]
+  },
+  "learningPoints": [
+    "既存挙動を保ちながら副作用だけを除去する",
+    "hidden testで入力データの非破壊性を回帰確認する"
+  ],
+  "starterCode": [
+    {"path": "starter/order-summary.js", "readonly": false},
+    {"path": "tests/visible/order-summary.visible.test.js", "readonly": true}
+  ],
+  "visibleTests": ["tests/visible/order-summary.visible.test.js"],
+  "hiddenTests": ["tests/hidden/order-summary.hidden.test.js"],
+  "runnerConfig": {
+    "buildCommand": "echo 'no build required'",
+    "testCommand": "node --test tests/visible/order-summary.visible.test.js tests/hidden/order-summary.hidden.test.js",
+    "runCommand": "node starter/order-summary.js",
+    "timeoutSeconds": 5,
+    "networkAccess": "disabled"
+  },
+  "reviewConfig": {
+    "prTitleTemplate": "refactor(problem): js-refactor-order-summary の副作用を除去",
+    "prBodyTemplate": "既存挙動・副作用の原因・変更内容・回帰確認を日本語で記載する",
+    "reviewerCommentTemplates": ["入力データを変更せず集計できているか確認してください。"],
+    "language": "ja",
+    "focusPoints": ["副作用", "回帰テスト", "最小差分"]
+  }
+}

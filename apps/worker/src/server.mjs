@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parseSubmissionQueueMessage } from '../../../packages/queue/src/message-contract.mjs';
 import { createQueueEventLogger, QUEUE_EVENTS } from '../../../packages/queue/src/queue-event-logger.mjs';
+import { canSubmitChallengeLanguage } from '../../../packages/runner-sdk/src/language-policy.mjs';
 import { getChallengeBasePath } from '../../api/src/repositories/challenge-repository.mjs';
 import {
   claimSubmissionForProcessing,
@@ -305,7 +306,7 @@ const processSubmission = async ({ submissionId, gradingAttempt, attemptIdempote
     const challengeBasePath = getChallengeBasePath(submission.challengeSlug);
     const challenge = await readJson(path.join(challengeBasePath, 'problem.json'));
 
-    if (submission.language !== 'javascript') {
+    if (!canSubmitChallengeLanguage(challenge, submission.language)) {
       if (!heartbeatController.hasOwnership()) {
         return { acknowledge: false, reason: 'processing_ownership_lost' };
       }
@@ -315,7 +316,7 @@ const processSubmission = async ({ submissionId, gradingAttempt, attemptIdempote
           status: 'failed',
           score: 0,
           durationMs: 0,
-          logs: ['このMVPではJavaScriptのみ採点対応です。'],
+          logs: ['このchallengeと言語の組み合わせは現在の採点Runnerでは利用できません。'],
           testResults: [],
           artifacts: []
         }

@@ -41,7 +41,21 @@ const assertLearnerSafeBoundary = (resultData) => {
   assert.equal(serialized.includes('[hidden] hidden tests log is not exposed in MVP.'), false);
 };
 
-test('challenge 一覧/詳細, submission 作成/結果取得', async (t) => {
+const enqueueSubmissionToWorker = async (workerBaseUrl, submission) => {
+  const response = await fetch(`${workerBaseUrl}/jobs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      schemaVersion: 1,
+      submissionId: submission.id,
+      gradingAttempt: submission.gradingAttempt,
+      attemptIdempotencyKey: submission.attemptIdempotencyKey
+    })
+  });
+  assert.equal(response.status, 202);
+};
+
+test('challenge 一覧/詳細, JavaScript・TypeScript submission 作成/結果取得', async (t) => {
   const worker = startServer('node', ['apps/worker/src/server.mjs'], { WORKER_PORT: '18081' });
   const api = startServer('node', ['apps/api/src/server.mjs'], {
     API_PORT: '18080',
@@ -60,7 +74,7 @@ test('challenge 一覧/詳細, submission 作成/結果取得', async (t) => {
 
   const listRes = await fetch('http://localhost:18080/api/challenges');
   const listData = await listRes.json();
-  assert.ok(listData.challenges.length >= 1);
+  assert.ok(listData.challenges.length >= 7);
 
   const detailRes = await fetch('http://localhost:18080/api/challenges/js-bugfix-add');
   const detailData = await detailRes.json();
@@ -102,6 +116,32 @@ test('challenge 一覧/詳細, submission 作成/結果取得', async (t) => {
   assert.ok(Array.isArray(adminResultData.result.internal.fullTestResults));
   assert.equal(adminResultData.attemptIdempotencyKey, undefined);
   assert.equal(adminResultData.processingLeaseExpiresAt, undefined);
+
+  const typescriptSubmissionRes = await fetch('http://localhost:18080/api/submissions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      challengeSlug: 'ts-feature-access-policy',
+      language: 'typescript',
+      code: `export type Role = 'admin' | 'editor' | 'viewer';
+export type AccessLevel = 'blocked' | 'full' | 'write' | 'read';
+export interface UserAccess { roles: Role[]; suspended: boolean; }
+export function getAccessLevel(user: UserAccess): AccessLevel {
+  if (user.suspended) return 'blocked';
+  if (user.roles.includes('admin')) return 'full';
+  if (user.roles.includes('editor')) return 'write';
+  return 'read';
+}`
+    })
+  });
+  assert.equal(typescriptSubmissionRes.status, 201);
+  const typescriptSubmission = await typescriptSubmissionRes.json();
+  const typescriptResult = await fetchSubmissionResultUntilCompleted(typescriptSubmission.id);
+  assert.equal(typescriptResult.status, 'completed');
+  assert.equal(typescriptResult.result.status, 'completed');
+  assert.equal(typescriptResult.result.visibleTests.every((result) => result.passed), true);
+  assert.equal(typescriptResult.result.hiddenTests.passed, true);
+  assertLearnerSafeBoundary(typescriptResult);
 });
 
 test('timeout/runtime failure 経路でも learner-safe 境界を維持する', async (t) => {
@@ -175,17 +215,13 @@ test('infrastructure failure は retry_pending -> queued 再投入後に infra_f
   await waitForHealth('http://localhost:18082/health');
   await waitForHealth('http://localhost:18080/health');
 
-  const submissionRes = await fetch('http://localhost:18080/api/submissions', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      challengeSlug: 'missing-challenge',
-      language: 'javascript',
-      code: 'module.exports=1;'
-    })
+  const repo = await import('../../apps/api/src/repositories/submission-repository.mjs');
+  const submission = await repo.createSubmission({
+    challengeSlug: 'missing-challenge',
+    language: 'javascript',
+    code: 'module.exports=1;'
   });
-  assert.equal(submissionRes.status, 201);
-  const submission = await submissionRes.json();
+  await enqueueSubmissionToWorker('http://localhost:18082', submission);
 
   const learnerResultData = await fetchSubmissionResultUntilCompleted(submission.id, {
     'x-web-user': 'learner:secure-learner'
@@ -256,17 +292,13 @@ test('retry再投入失敗時にqueued attemptをinfra_failedへ終端化する'
   await waitForHealth('http://localhost:18084/health');
   await waitForHealth('http://localhost:18080/health');
 
-  const submissionRes = await fetch('http://localhost:18080/api/submissions', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      challengeSlug: 'missing-challenge',
-      language: 'javascript',
-      code: 'module.exports=1;'
-    })
+  const repo = await import('../../apps/api/src/repositories/submission-repository.mjs');
+  const submission = await repo.createSubmission({
+    challengeSlug: 'missing-challenge',
+    language: 'javascript',
+    code: 'module.exports=1;'
   });
-  assert.equal(submissionRes.status, 201);
-  const submission = await submissionRes.json();
+  await enqueueSubmissionToWorker('http://localhost:18084', submission);
 
   const learnerResultData = await fetchSubmissionResultUntilCompleted(submission.id, {
     'x-web-user': 'learner:secure-learner'
