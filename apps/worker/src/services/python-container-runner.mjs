@@ -4,6 +4,14 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 
 export const PYTHON_RUNNER_IMAGE = 'python:3.14.5-alpine3.22@sha256:6b91e66ab2a880ce9ca5a1b91c70f45963ff71ff68268df056336e1a657d5efd';
+const MAX_CAPTURE_BYTES = 256 * 1024;
+
+const appendLimited = (current, chunk) => {
+  if (Buffer.byteLength(current, 'utf8') >= MAX_CAPTURE_BYTES) return current;
+  const next = current + chunk.toString('utf8');
+  if (Buffer.byteLength(next, 'utf8') <= MAX_CAPTURE_BYTES) return next;
+  return Buffer.from(next, 'utf8').subarray(0, MAX_CAPTURE_BYTES).toString('utf8');
+};
 
 const resolveWorkspacePath = (workingDirectory, relativePath) => {
   if (typeof relativePath !== 'string' || !relativePath || path.isAbsolute(relativePath)) {
@@ -22,15 +30,20 @@ export const buildPythonContainerArgs = ({
   cpuLimit = '0.5',
   memoryLimit = '256m',
   pidsLimit = 64,
-  tmpfs = '/tmp:rw,noexec,nosuid,size=64m'
+  tmpfs = '/tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777'
 }) => [
   'run', '--rm',
   '--network', 'none',
   '--read-only',
+  '--cap-drop', 'ALL',
+  '--security-opt', 'no-new-privileges=true',
+  '--user', '65534:65534',
   '--tmpfs', tmpfs,
   '--cpus', cpuLimit,
   '--memory', memoryLimit,
   '--pids-limit', String(pidsLimit),
+  '--ulimit', 'nofile=64:64',
+  '--stop-timeout', '3',
   '-v', `${workingDirectory}:/workspace:ro`,
   '-w', '/workspace',
   image,
@@ -76,8 +89,8 @@ export const runPythonTestInContainer = ({
     killTimer = setTimeout(() => child.kill?.('SIGKILL'), 3000);
   }, timeoutMs + 5000);
 
-  child.stdout?.on('data', (chunk) => { stdout += chunk.toString('utf8'); });
-  child.stderr?.on('data', (chunk) => { stderr += chunk.toString('utf8'); });
+  child.stdout?.on('data', (chunk) => { stdout = appendLimited(stdout, chunk); });
+  child.stderr?.on('data', (chunk) => { stderr = appendLimited(stderr, chunk); });
   child.on('error', (error) => finish(`runtime unavailable: ${error.code ?? error.message}`, false));
   child.on('close', (code) => {
     if (timedOut) return finish('timeout', false);
