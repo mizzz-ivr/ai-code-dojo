@@ -11,6 +11,7 @@ import {
   canSubmitChallengeLanguage,
   isRunnableChallengeLanguage
 } from '../../packages/runner-sdk/src/language-policy.mjs';
+import { runJavaScriptChallenge } from '../../apps/worker/src/services/js-runner.mjs';
 
 test('公開Runner言語と隔離preview言語を分離する', () => {
   assert.deepEqual(PUBLIC_RUNNER_LANGUAGES, ['javascript', 'typescript', 'sql', 'html-css']);
@@ -40,4 +41,29 @@ test('公開言語でもnetworkAccessがdisabledでなければ提出を拒否�
     canSubmitChallengeLanguage({ ...sqlChallenge, runnerConfig: { networkAccess: 'enabled' } }, 'sql'),
     false
   );
+});
+
+test('複数対応Challengeでも明示されたsubmission languageでRunnerを選ぶ', async () => {
+  const result = await runJavaScriptChallenge({
+    challenge: {
+      metadata: {
+        slug: 'multi-language-contract',
+        supportedLanguages: ['javascript', 'sql']
+      },
+      runnerConfig: {
+        timeoutSeconds: 5,
+        networkAccess: 'disabled'
+      },
+      starterCode: [],
+      visibleTests: [],
+      hiddenTests: []
+    },
+    challengeBasePath: '/does-not-need-to-exist-for-invalid-sql',
+    code: 'DELETE FROM orders',
+    language: 'sql'
+  });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(result.score, 0);
+  assert.equal(result.testResults[0].message, 'invalid sql');
 });
