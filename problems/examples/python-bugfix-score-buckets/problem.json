@@ -1,0 +1,72 @@
+{
+  "metadata": {
+    "title": "スコア区分の境界値バグ修正",
+    "slug": "python-bugfix-score-buckets",
+    "difficulty": "medium",
+    "category": "bugfix",
+    "supportedLanguages": [
+      "python"
+    ],
+    "framework": "python",
+    "tags": [
+      "python",
+      "bugfix",
+      "boundary-value",
+      "validation"
+    ]
+  },
+  "statement": {
+    "background": "学習結果APIで0〜100点のスコアをA〜Dへ分類していますが、境界値の扱いに不具合があります。",
+    "issue": "classify_score の閾値と入力検証を修正し、仕様どおりの区分を返してください。",
+    "acceptanceCriteria": [
+      "90〜100はA、80〜89はB、60〜79はC、0〜59はDを返す",
+      "0未満または100を超える値ではValueErrorを送出する",
+      "境界値0、59、60、79、80、89、90、100を正しく処理する"
+    ],
+    "outOfScope": [
+      "小数スコアの丸め仕様",
+      "文字列から数値への暗黙変換"
+    ]
+  },
+  "learningPoints": [
+    "条件分岐の境界値設計",
+    "入力バリデーション",
+    "Python unittestによる回帰テスト"
+  ],
+  "starterCode": [
+    {
+      "path": "starter/score.py",
+      "readonly": false
+    },
+    {
+      "path": "tests/visible/score_visible_test.py",
+      "readonly": true
+    }
+  ],
+  "visibleTests": [
+    "tests/visible/score_visible_test.py"
+  ],
+  "hiddenTests": [
+    "tests/hidden/score_hidden_test.py"
+  ],
+  "runnerConfig": {
+    "buildCommand": "runner-managed:no-build",
+    "testCommand": "runner-managed:python-container",
+    "runCommand": "runner-managed:python-container",
+    "timeoutSeconds": 5,
+    "networkAccess": "disabled"
+  },
+  "reviewConfig": {
+    "prTitleTemplate": "fix(problem): python-bugfix-score-buckets の境界値を修正",
+    "prBodyTemplate": "境界値・入力検証・テスト結果を日本語で記載する",
+    "reviewerCommentTemplates": [
+      "境界値と異常系を確認しました。"
+    ],
+    "language": "ja",
+    "focusPoints": [
+      "境界値",
+      "例外処理",
+      "テスト"
+    ]
+  }
+}
