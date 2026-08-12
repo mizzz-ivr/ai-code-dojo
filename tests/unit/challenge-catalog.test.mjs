@@ -10,7 +10,9 @@ import {
 const challenges = [
   { slug: 'js-bugfix-add', title: '合計関数のバグ修正', difficulty: 'easy', category: 'bugfix', supportedLanguages: ['javascript'] },
   { slug: 'ts-feature-user-display', title: 'ユーザー表示名の機能追加', difficulty: 'easy', category: 'feature', supportedLanguages: ['typescript'] },
-  { slug: 'sql-monthly-sales', title: '月次売上集計クエリ', difficulty: 'medium', category: 'sql', supportedLanguages: ['sql'] }
+  { slug: 'sql-monthly-sales', title: '月次売上集計クエリ', difficulty: 'medium', category: 'sql', supportedLanguages: ['sql'] },
+  { slug: 'html-css-feature-profile-card', title: 'プロフィールカードのレスポンシブ改善', difficulty: 'medium', category: 'feature', supportedLanguages: ['html-css'] },
+  { slug: 'python-bugfix-score-buckets', title: 'スコア区分の境界値バグ修正', difficulty: 'medium', category: 'bugfix', supportedLanguages: ['python'] }
 ];
 
 test('catalog filterをquery stringから正規化する', () => {
@@ -23,18 +25,22 @@ test('catalog filterをquery stringから正規化する', () => {
   });
 });
 
-test('公開言語filterは現行Workerで採点確認済みのJS/TSに限定する', () => {
-  assert.deepEqual(CHALLENGE_CATALOG_OPTIONS.languages, ['javascript', 'typescript']);
+test('公開言語filterは実採点可能なJS/TS/SQL/HTML-CSSに限定する', () => {
+  assert.deepEqual(CHALLENGE_CATALOG_OPTIONS.languages, ['javascript', 'typescript', 'sql', 'html-css']);
   assert.equal(readChallengeCatalogFilters(new URLSearchParams('language=python')).language, '');
-  assert.equal(readChallengeCatalogFilters(new URLSearchParams('language=sql')).language, '');
+  assert.equal(readChallengeCatalogFilters(new URLSearchParams('language=sql')).language, 'sql');
+  assert.equal(readChallengeCatalogFilters(new URLSearchParams('language=html-css')).language, 'html-css');
 });
 
 test('Challengeの採点可否を言語からfail-closed判定する', () => {
   assert.equal(isChallengeRunnable(challenges[0]), true);
   assert.equal(isChallengeRunnable(challenges[1]), true);
-  assert.equal(isChallengeRunnable(challenges[2]), false);
+  assert.equal(isChallengeRunnable(challenges[2]), true);
+  assert.equal(isChallengeRunnable(challenges[3]), true);
+  assert.equal(isChallengeRunnable(challenges[4]), false);
   assert.equal(isChallengeRunnable({ metadata: { supportedLanguages: ['typescript'] } }), true);
-  assert.equal(isChallengeRunnable({ supportedLanguages: ['javascript', 'sql'] }), false);
+  assert.equal(isChallengeRunnable({ supportedLanguages: ['javascript', 'sql'] }), true);
+  assert.equal(isChallengeRunnable({ supportedLanguages: ['javascript', 'python'] }), false);
   assert.equal(isChallengeRunnable({ supportedLanguages: [] }), false);
 });
 
