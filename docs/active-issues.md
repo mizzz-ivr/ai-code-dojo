@@ -17,7 +17,7 @@
 ### #145 Python Runnerの本番隔離実行基盤を導入する
 
 - 優先度: P1
-- 状態: Open / PR #146 Draft
+- 状態: Open / PR #146 Draft（最終CI成功、Ready移行前）
 - GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/145`
 - GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/146`
 - Branch: `feat/python-remote-isolation-runner`
@@ -27,7 +27,7 @@
 
 Issue #143で追加したPython isolated-previewを、WorkerへDocker socketを公開せず専用Remote Runnerへ分離し、submitted codeからhidden test file自体を読めない実行境界へ移行する。
 
-#### PR #146で実装中
+#### PR #146で実装済み
 
 - `apps/python-runner`専用service。
 - Workerは署名付きHTTP clientのみ。Python Docker実行コードをWorkerから削除。
@@ -46,16 +46,35 @@ Issue #143で追加したPython isolated-previewを、WorkerへDocker socketを�
 - hidden case / expected valueは信頼側processだけが保持。
 - submitted codeからhidden test filesystemを参照できない実Docker integration test。
 - Worker client → Remote Runner → actual Docker → Python sandboxの実HTTP integration test。
+- SyntaxError / runtime failure / timeout / protocol failureをterminal grading failureとして扱い、ユーザーコード起因の不要なinfra retryを防止。
+- Docker起動不可等の実行基盤failureのみinfra retry対象。
 
 #### CI状況
 
-head `1cc2b3796c7259d81962b5ad00bbee6918d95576`でunit / integrationを含む主要jobは成功済み。共有HMAC契約をrunner-sdkへ整理した最新headは再CI中。
+head `41517264580678372428b8d3df0d4b0e9dff0699`で以下がすべてSuccess。
 
-初回CIで以下を検出・修正した。
+- Docs validation
+- Frozen lockfile install
+- Lint
+- Typecheck
+- Unit test
+- Integration test
+- Schema validation
+- Infra validation
+- Build
+- PostgreSQL 18.4 integration
+- Python actual Docker contract
+- hidden test filesystem isolation
+- Worker → Remote Runner → Docker E2E
+- HMAC 401 / idempotency conflict 409
+- SyntaxError / timeout terminal grading契約
+
+初回CI / 自己レビューで以下を検出・修正した。
 
 1. JSON request bodyをliteral multiline codeで比較していたunit testの期待値ミス → JSON parse後のcode一致へ修正。
 2. `mkdtemp`の0700 directoryをnon-root containerが読めない問題 → 実行中だけ0555、cleanup前に0700へ戻す。
 3. WorkerがPython Runner app内部のauth moduleへ直接依存していた責務不整合 → `packages/runner-sdk`へ共有署名契約を移動。
+4. SyntaxError / timeout等の提出コード起因failureが503となりinfra retryを誘発するコスト増幅リスク → terminal 0点へ分類し、基盤failureと分離。
 
 #### このPRでは完了しない事項
 
@@ -140,6 +159,7 @@ PR #146の完了条件は「本番へ接続可能な安全なRemote Runner境界
 - API processでsubmission codeを直接実行しない。
 - Problem JSON由来commandを任意shellとして実行しない。
 - Hidden testsをlearner向け公開境界へ返さない。
+- ユーザーコード起因failureをinfra retryへ誤分類しない。
 - Submission + outbox atomicityを弱めない。
 - Processing lease / attempt fencing / completion guardを弱めない。
 - Outbox claim / lease前にAPI desired countを1より増やさない。

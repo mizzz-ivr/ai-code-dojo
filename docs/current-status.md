@@ -55,6 +55,8 @@ Python Challenge `python-bugfix-score-buckets`はcontentとして存在するが
 - Python imageはdigest固定。
 - network none / read-only / non-root / cap-drop / no-new-privileges / CPU / memory / pids / fd / timeoutを維持。
 - timeout時のcontainer強制削除とlabelによるorphan cleanup境界を追加。
+- 提出コード由来のSyntaxError / runtime failure / timeout / protocol failureはterminal grading failureとして0点で終了し、不要なinfra retryを発生させない。
+- Docker起動不可など実行基盤側の失敗だけをinfra failureとして扱う。
 
 ### Hidden test filesystem isolation
 
@@ -69,21 +71,25 @@ visible / hidden case定義、期待値、hidden test sourceはRemote Runnerの�
 
 ### CIで確認済みの経路
 
-code head `1cc2b3796c7259d81962b5ad00bbee6918d95576`では以下が成功済み。
+code head `41517264580678372428b8d3df0d4b0e9dff0699`で以下がすべて成功済み。
 
+- Docs validation
+- Frozen lockfile install
 - Lint
 - Typecheck
 - Unit test
+- Integration test
 - Schema validation
 - Infra validation
+- Build
 - PostgreSQL 18.4 integration
 - Python starter failure / reference solution success
 - submitted codeからhidden test filesystemを参照できないこと
 - Worker client → HTTP Remote Runner → actual Docker → Python sandbox
 - HMAC不正401
 - idempotency payload差し替え409
-
-共有署名契約をrunner-sdkへ移した最新headは再CI対象。
+- SyntaxErrorをterminal 0点として扱うこと
+- timeoutをterminal 0点として扱うこと
 
 ## Issue #145でまだ未完了の事項
 
@@ -106,6 +112,7 @@ Actual AWS変更は明示承認なしに実施しない。
 - Unsupported languageをsubmission / outbox永続化前にfail-closed拒否する。
 - Submission + queue outbox atomicityを変更しない。
 - Processing lease / attempt fencing / completion guardを変更しない。
+- ユーザーコード起因failureをinfra retryへ誤分類しない。
 - DB cutoverとqueue transport切替を同じchangeへ含めない。
 - Production runtimeはSQLite / HTTPを維持する。
 

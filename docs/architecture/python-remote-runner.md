@@ -117,10 +117,31 @@ Remote Runnerはjob registryを持つ。
 
 - 同一idempotency key + 同一payload: 実行中promiseまたは完了resultを再利用。
 - 同一key + 異なるpayload: 409 conflict。
-- execution failure: cache entryを削除し再試行可能。
+- infrastructure failure: cache entryを削除し再試行可能。
 - result TTL: 既定10分。
 
 現時点のregistryはprocess-localであり、複数Remote Runner instanceを跨ぐ強いdeduplicationは保証しない。ただしsandboxはnetwork disabled / read-onlyで外部副作用を持たず、Submissionの最終完了は既存attempt fencing / completion guardが正本となる。複数instance構成時の重複実行コストはstagingで評価する。
+
+## Failure classification
+
+ユーザーコード起因failureと実行基盤failureを分離する。
+
+### Terminal grading failure
+
+次はHTTP 503へせず、採点結果`completed / score 0`として返す。
+
+- SyntaxErrorなどPython processの異常終了。
+- submission runtime failure。
+- timeout。
+- sandbox protocolを壊す結果。
+
+これらをinfra retryへ流さないことで、失敗submissionが既存retry回数分だけsandbox実行コストを増幅させることを防ぐ。
+
+### Infrastructure failure
+
+Docker processのspawn失敗、またはDocker自身がcontainer commandを開始できない種類の失敗だけをRemote Runner failureとして扱う。
+
+実装ではDocker `run`の125 / 126 / 127を基盤側failureとして扱い、それ以外のcontainer command non-zeroはterminal grading failureへ分類する。
 
 ## Concurrency / quota
 
@@ -141,7 +162,7 @@ Actual AWS側のtask数 / autoscaling / budget / concurrency quotaはこのPRで
 - timeout: TERM / KILLに加えて`docker rm -f <container>`。
 - service startup: label付き残存containerをcleanupする。
 
-## Failure contract
+## Failure response contract
 
 Remote Runnerはraw exceptionを外へ出さず、次のような一般化errorだけを返す。
 
@@ -163,7 +184,11 @@ GitHub Actions integration jobで実Docker imageをpullし、以下を確認す�
 4. Worker client → HTTP Remote Runner → actual Docker → Python sandboxで100点になる。
 5. HMAC不正は401。
 6. 同一idempotency keyのpayload差し替えは409。
-7. 既存PostgreSQL integration、lease / fencing / retry系を壊さない。
+7. SyntaxErrorはterminal 0点になる。
+8. timeoutはterminal 0点になる。
+9. 既存PostgreSQL integration、lease / fencing / retry系を壊さない。
+
+head `41517264580678372428b8d3df0d4b0e9dff0699`で上記を含むapp-quality全jobとdocs-validationがSuccess。
 
 ## Production公開gate
 
