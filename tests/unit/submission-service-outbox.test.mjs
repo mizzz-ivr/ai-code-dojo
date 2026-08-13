@@ -108,28 +108,45 @@ test('Challengeが対応しないlanguageへの偽装を永続化前に拒否す
   });
 });
 
-test('SQL Challengeはlanguage偽装を含め現行Runnerへ投入しない', async () => {
+test('SQLは正しいlanguageで許可し偽装を拒否する', async () => {
   const sqlChallenge = {
     metadata: {
       slug: 'sql-monthly-sales',
       supportedLanguages: ['sql']
-    }
+    },
+    runnerConfig: { networkAccess: 'disabled' }
   };
 
   const sqlResult = await validateSubmissionTarget(
     { challengeSlug: 'sql-monthly-sales', language: 'sql', code: 'SELECT 1;' },
     { getChallenge: async () => sqlChallenge }
   );
-  assert.deepEqual(sqlResult, {
-    error: 'このchallengeと言語の組み合わせは現在の採点Runnerでは利用できません。',
-    statusCode: 400
-  });
+  assert.equal(sqlResult, null);
 
   const spoofedResult = await validateSubmissionTarget(
     { challengeSlug: 'sql-monthly-sales', language: 'javascript', code: 'SELECT 1;' },
     { getChallenge: async () => sqlChallenge }
   );
   assert.deepEqual(spoofedResult, {
+    error: 'このchallengeと言語の組み合わせは現在の採点Runnerでは利用できません。',
+    statusCode: 400
+  });
+});
+
+test('Python Challengeは隔離Runner contractがあっても本番公開前は拒否する', async () => {
+  const pythonChallenge = {
+    metadata: {
+      slug: 'python-bugfix-score-buckets',
+      supportedLanguages: ['python']
+    },
+    runnerConfig: { networkAccess: 'disabled' }
+  };
+
+  const result = await validateSubmissionTarget(
+    { challengeSlug: 'python-bugfix-score-buckets', language: 'python', code: 'print(1)' },
+    { getChallenge: async () => pythonChallenge }
+  );
+  assert.deepEqual(result, {
     error: 'このchallengeと言語の組み合わせは現在の採点Runnerでは利用できません。',
     statusCode: 400
   });

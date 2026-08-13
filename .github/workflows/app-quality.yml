@@ -60,6 +60,8 @@ jobs:
       NODE_ENV: test
       POSTGRESQL_TEST_DATABASE_URL: postgresql://dojo:dojo_test_password@127.0.0.1:5432/dojo_test
       POSTGRESQL_SSL_MODE: disable
+      RUNNER_PYTHON_CONTAINER_CONTRACT: 1
+      PYTHON_RUNNER_IMAGE: python:3.14.5-alpine3.22@sha256:6b91e66ab2a880ce9ca5a1b91c70f45963ff71ff68268df056336e1a657d5efd
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -68,6 +70,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Python Runner imageを事前取得
+        run: docker pull "$PYTHON_RUNNER_IMAGE"
       - run: pnpm test:integration
 
   schema-validation:

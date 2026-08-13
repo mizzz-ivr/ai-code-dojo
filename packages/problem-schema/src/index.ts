@@ -9,7 +9,7 @@ export interface ProblemDefinition {
     difficulty: 'easy' | 'medium' | 'hard';
     category: 'bugfix' | 'feature' | 'sql' | 'refactor';
     supportedLanguages: SupportedLanguage[];
-    framework: 'vanilla' | 'react' | 'node' | 'fastapi' | 'sql';
+    framework: 'vanilla' | 'react' | 'node' | 'fastapi' | 'python' | 'sql';
     tags: string[];
   };
   statement: {
@@ -80,7 +80,7 @@ export const problemDefinitionSchema = {
           minItems: 1,
           items: { enum: [...SupportedLanguages] }
         },
-        framework: { enum: ['vanilla', 'react', 'node', 'fastapi', 'sql'] },
+        framework: { enum: ['vanilla', 'react', 'node', 'fastapi', 'python', 'sql'] },
         tags: {
           type: 'array',
           minItems: 1,

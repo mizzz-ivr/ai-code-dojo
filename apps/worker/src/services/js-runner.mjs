@@ -1,93 +1,28 @@
-import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { getRunnerContract, RUNNER_KINDS } from '../../../../packages/runner-sdk/src/runner-contract.mjs';
+import { runChallenge } from './challenge-runner.mjs';
 
-const runNodeTests = (cwd, tests, timeoutMs, visibility) =>
-  new Promise((resolve) => {
-    const started = Date.now();
-    const child = spawn('node', ['--test', ...tests], { cwd });
+const inferLanguage = (challenge) => challenge?.metadata?.supportedLanguages?.[0] ?? null;
 
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
+export const runJavaScriptChallenge = async (input) => runChallenge({
+  ...input,
+  language: input.language ?? inferLanguage(input.challenge)
+});
 
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGKILL');
-    }, timeoutMs);
-
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString('utf8');
-    });
-
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString('utf8');
-    });
-
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      const durationMs = Date.now() - started;
-      resolve({
-        output: `${stdout}\n${stderr}`.trim(),
-        result: {
-          testId: `${visibility}-suite`,
-          passed: !timedOut && code === 0,
-          message: timedOut ? 'timeout' : code === 0 ? 'ok' : 'failed',
-          durationMs,
-          visibility
-        }
-      });
-    });
-  });
-
-export const runJavaScriptChallenge = async ({ challenge, challengeBasePath, code }) => {
-  const tmpRoot = await mkdtemp(path.join(os.tmpdir(), 'ai-dojo-run-'));
-  const workingDirectory = path.join(tmpRoot, challenge.metadata.slug);
-  const startedAt = Date.now();
-
-  await cp(challengeBasePath, workingDirectory, { recursive: true });
-
-  const editableStarter = challenge.starterCode.find((file) => !file.readonly);
-  if (editableStarter) {
-    await writeFile(path.join(workingDirectory, editableStarter.path), code, 'utf8');
+export const runJavaScriptChallengeViaIsolatedJob = async ({ challenge, challengeBasePath, code, language }) => {
+  const resolvedLanguage = language ?? inferLanguage(challenge);
+  const contract = getRunnerContract(resolvedLanguage);
+  if (contract && contract.kind !== RUNNER_KINDS.NODE_TEST) {
+    return runChallenge({ challenge, challengeBasePath, code, language: resolvedLanguage });
   }
-
-  const visibleRun = await runNodeTests(
-    workingDirectory,
-    challenge.visibleTests,
-    challenge.runnerConfig.timeoutSeconds * 1000,
-    'visible'
-  );
-  const hiddenRun = await runNodeTests(
-    workingDirectory,
-    challenge.hiddenTests,
-    challenge.runnerConfig.timeoutSeconds * 1000,
-    'hidden'
-  );
-
-  const testResults = [visibleRun.result, hiddenRun.result];
-  const passedCount = testResults.filter((test) => test.passed).length;
-
-  const result = {
-    status: 'completed',
-    score: Math.round((passedCount / testResults.length) * 100),
-    durationMs: Date.now() - startedAt,
-    logs: [
-      `[visible] ${visibleRun.output}`,
-      '[hidden] hidden tests log is not exposed in MVP.'
-    ],
-    testResults,
-    artifacts: []
-  };
-
-  await rm(tmpRoot, { recursive: true, force: true });
-
-  return result;
+  return runJavaScriptChallengeViaIsolatedJobWithSpawn({
+    challenge,
+    challengeBasePath,
+    code,
+    spawnImpl: spawn
+  });
 };
-
-export const runJavaScriptChallengeViaIsolatedJob = async ({ challenge, challengeBasePath, code }) =>
-  runJavaScriptChallengeViaIsolatedJobWithSpawn({ challenge, challengeBasePath, code, spawnImpl: spawn });
 
 export const runJavaScriptChallengeViaIsolatedJobWithSpawn = async ({
   challenge,

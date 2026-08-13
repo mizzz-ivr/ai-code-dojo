@@ -1,0 +1,74 @@
+{
+  "metadata": {
+    "title": "プロフィールカードのレスポンシブ改善",
+    "slug": "html-css-feature-profile-card",
+    "difficulty": "medium",
+    "category": "feature",
+    "supportedLanguages": [
+      "html-css"
+    ],
+    "framework": "vanilla",
+    "tags": [
+      "html",
+      "css",
+      "responsive",
+      "accessibility"
+    ]
+  },
+  "statement": {
+    "background": "メンバー紹介ページのプロフィールカードをスマートフォンでも読みやすくする改修依頼が入りました。",
+    "issue": "現在のカードは意味のある構造とレスポンシブなレイアウトが不足しています。",
+    "acceptanceCriteria": [
+      "profile-card クラスを持つ article 要素を使用する",
+      "avatar画像に内容が分かるalt属性を設定する",
+      "名前をh2要素で表示する",
+      "カード本文をCSS Gridで配置する",
+      "600px以下で1カラムになるmedia queryを定義する"
+    ],
+    "outOfScope": [
+      "JavaScriptによる動的UI",
+      "外部CSSフレームワーク導入"
+    ]
+  },
+  "learningPoints": [
+    "セマンティックHTML",
+    "CSS Gridとmedia query",
+    "静的UIのアクセシビリティ観点"
+  ],
+  "starterCode": [
+    {
+      "path": "starter/index.html",
+      "readonly": false
+    },
+    {
+      "path": "tests/visible/profile-card.visible.test.mjs",
+      "readonly": true
+    }
+  ],
+  "visibleTests": [
+    "tests/visible/profile-card.visible.test.mjs"
+  ],
+  "hiddenTests": [
+    "tests/hidden/profile-card.hidden.test.mjs"
+  ],
+  "runnerConfig": {
+    "buildCommand": "runner-managed:no-build",
+    "testCommand": "runner-managed:html-css-static",
+    "runCommand": "runner-managed:html-css-static",
+    "timeoutSeconds": 5,
+    "networkAccess": "disabled"
+  },
+  "reviewConfig": {
+    "prTitleTemplate": "feat(problem): html-css-feature-profile-card のUI改善",
+    "prBodyTemplate": "HTML構造・CSS方針・レスポンシブ確認結果を日本語で記載する",
+    "reviewerCommentTemplates": [
+      "セマンティクスとレスポンシブ要件を確認しました。"
+    ],
+    "language": "ja",
+    "focusPoints": [
+      "要件充足",
+      "アクセシビリティ",
+      "レスポンシブ"
+    ]
+  }
+}

@@ -1,6 +1,6 @@
 # current-status（正本）
 
-最終更新: 2026-08-10（Issue #141 / PR #142 公開Challenge catalog拡充を実装）
+最終更新: 2026-08-12（Issue #143 / PR #144 言語別Runner contract）
 
 ## この文書の目的
 
@@ -8,172 +8,157 @@
 
 ## 今の状態
 
-- Repositoryのcanonical full nameは`mizzz-ivr/ai-code-dojo`。
-- AI生成コードのバグ修正・機能追加を実務フローで学ぶ練習プラットフォームとしてMVP運用を継続中。
-- HTTP / SQS queue runtime、transactional outbox、processing lease / heartbeat、attempt fencing、completion guard、stale recoveryを実装済み。
-- PR #132でManaged PostgreSQL移行とAPI / Worker / Migrator分離設計をmerge済み。
-- PR #134でprovider非依存のasync DatabaseClient contractをmerge済み。
-- PR #136でversioned migration runnerとSQLite / PostgreSQL共通logical schemaをmerge済み。
-- PR #138で実PostgreSQL migration executor、`pg` driver、実DB integration testをmerge済み。
-- PR #140でDB-backedなAdmin Challenge Repositoryをasync DatabaseClientへ移行済み。
-- Issue #141 / PR #142で公開Challenge catalogの検索・絞り込みとJS/TS実践問題4件を実装中。
-- Issue #143でSQL / Python / HTML-CSS向け言語別Runner contractを後続管理する。
-- Linearは無料Issue上限のため、Issue #141 / #143はGitHub Issue / Repository docs / Notionを管理正本とする。
+- Repository: `mizzz-ivr/ai-code-dojo`。
+- AI生成コードのバグ修正・機能追加を実務フローで学ぶ練習プラットフォームとしてMVP開発中。
+- PR #142は2026-08-12にmerge済み。公開Challenge検索・絞り込み、JS/TS実践問題4件、TypeScript実採点をmainへ反映済み。
+- Issue #143 / PR #144で言語別Runner contractを実装中。
+- Public Challengeは7件から9件へ拡充予定。
+- SQL / HTML-CSSはPR #144で公開提出可能にする。
+- PythonはChallengeと隔離Runner contractを追加するが、本番隔離基盤が未整備のためPublic APIではfail-closed拒否する。
+- Python本番公開はIssue #145で後続管理する。
+- Linearは無料Issue上限のため、Issue #143 / #145はGitHub Issue / Repository docsを管理正本とする。
 
 ## 現行runtime
 
-- Production相当のDatabase providerはSQLite `.data/app.db`。
-- Queue transportの既定値はAPI / WorkerともHTTP。
-- Public Challenge Repositoryは`problems/examples/*/problem.json`を読むfile-backed実装。
-- Admin Challenge Repositoryは`challenges` / `challenge_versions`をDB-backedで管理し、async DatabaseClientを使用する。
-- Submission / lease / outbox Repositoryは引き続き同期SQLite固有APIへ依存する。
-- Worker isolation runnerはvisible / hidden test pathを`node --test`へ渡すNode系runner。
-- API / Workerの各SQLite接続へ5秒の有限`busy_timeout`を設定している。
-- GitHub ActionsではPostgreSQL 18.4 service containerによる実DB integration testを実行する。
-- RDS、ECS、Secrets Manager resourceは未作成。
-- APIで提出コードを直接実行せず、hidden testsをlearnerへ返さない。
+- Production相当Database provider: SQLite `.data/app.db`。
+- Queue transport既定: HTTP。
+- Public Challenge Repository: `problems/examples/*/problem.json`のfile-backed実装。
+- Admin Challenge Repository: DB-backed / async DatabaseClient。
+- Submission / lease / outbox Repository: 同期SQLite固有APIを継続。
+- PostgreSQL 18.4のmigration / integration基盤は利用可能だが、本番DB切替は未実施。
+- RDS / ECS / Secrets Managerの本番resourceは未作成。
 
-## 公開Challenge catalog（Issue #141 / PR #142）
+## Public Challenge
 
-### Challenge数
+PR #142 merge後: 7件。
 
-変更前: 3件。
+PR #144追加:
 
-- `js-bugfix-add`
-- `ts-feature-user-display`
-- `sql-monthly-sales`
+- `html-css-feature-profile-card`: medium / feature / HTML-CSS。
+- `python-bugfix-score-buckets`: medium / bugfix / Python。公開提出はまだ不可。
 
-追加4件:
+PR #144 merge後のfile-backed content: 9件。
 
-- `js-refactor-order-summary`: medium / refactor / JavaScript
-- `js-bugfix-pagination-window`: hard / bugfix / JavaScript
-- `ts-feature-access-policy`: medium / feature / TypeScript
-- `ts-refactor-feature-flags`: hard / refactor / TypeScript
+既存`sql-monthly-sales`はPR #144で安全なSQLite evaluatorへ移行し、提出可能化する。
 
-File-backed contentとしては変更後7件。
+## 言語別Runner contract
 
-### 問題一覧
+正本: `packages/runner-sdk/src/runner-contract.mjs`。
 
-- title / slugのkeyword部分一致。
-- difficulty: easy / medium / hard。
-- category: bugfix / feature / sql / refactor。
-- language filterは現行Runnerで採点確認済みのjavascript / typescriptのみ。
-- 複合filter対応。
-- GET query stringで条件を保持。
-- 一致0件のempty state。
-- `filtered / total`件数表示。
-- mobile幅ではfilterを1列化。
-- 未知enum値はfilter無効として扱い、500にしない。
-- query値をinput属性へ戻すため`"` / `'`を含むHTML attribute escapeを行う。
-- 問題詳細の誤った`metadata.type`参照を正式な`metadata.category`へ修正。
+| language | Runner | 公開状態 |
+| --- | --- | --- |
+| JavaScript | `node-test` | 提出可能 |
+| TypeScript | `node-test` | 提出可能 |
+| SQL | `sqlite-readonly` | PR #144 merge後に提出可能 |
+| HTML/CSS | `html-css-static` | PR #144 merge後に提出可能 |
+| Python | `python-container` | isolated-preview / 提出不可 |
 
-### 採点可能言語の境界
+Web / API / Workerは同じRunner contractからpublic allowlistを取得する。
 
-実行経路を再確認した結果、現行WorkerでPR #142の実Challenge contractまで確認できているのはJavaScript / TypeScript。
+WorkerはAPIで検証済みの`submission.language`をRunnerへ明示的に渡し、ChallengeのsupportedLanguages先頭要素へ暗黙依存しない。
 
-既存`sql-monthly-sales`はProblem JSON上の`testCommand`が`python run_sql_tests.py`、`runCommand`が`sqlite3`前提だが、現行Workerはそのcommandを実行せず`node --test`固定であるため、SQLは現時点で安全に採点できない。
+## SQL Runner
 
-そのためPR #142ではfail-closedにする。
+- Submitted SQLをJavaScriptやshellとして実行しない。
+- 単一statement、最大32KiB。
+- `SELECT` / `WITH`のみ許可。
+- DDL / DML、`ATTACH` / `DETACH` / `PRAGMA` / `VACUUM`等を拒否。
+- trusted Node testが`node:sqlite`のin-memory DBへfixtureを作成して評価する。
+- visible / hidden testを分離し、hidden logをlearnerへ返さない。
 
-- JavaScript / TypeScript: 一覧から問題を開き、提出可能。
-- SQL: contentは残すが一覧actionは「採点準備中」。詳細でも提出formを出さない。
-- `/submit`へSQL等の未対応languageを直接POSTしてもWeb側で400拒否し、APIへforwardしない。
-- Python / HTML-CSS: Runner未実装のため公開filter候補へ出さない。
+## HTML/CSS Runner
 
-SQL / Python / HTML-CSS RunnerはIssue #143で別実装する。
+- Submitted HTML/CSSをブラウザやJavaScriptとして実行しない。
+- trusted Node testから静的構造・CSS rule・アクセシビリティ条件を検証する。
+- MVPではbrowser rendering / visual regressionは対象外。
 
-### Content contract test
+## Python Runner preview
 
-新規4問について以下をintegration testで保証する。
+固定image:
 
-- editable starterが存在する。
-- `networkAccess: disabled`。
-- starter状態ではvisible / hidden全testを通過しない。
-- reference solutionではvisible / hidden全testが成功する。
+`python:3.14.5-alpine3.22@sha256:6b91e66ab2a880ce9ca5a1b91c70f45963ff71ff68268df056336e1a657d5efd`
 
-初回integrationでは、親のNode test runnerから内部環境変数`NODE_TEST_CONTEXT`が子`node --test`へ継承され、再帰testとして全fileがskipされexit 0になる検証ハーネス不具合を検出した。
+CIでは実Docker containerでstarter failure / reference solution successを検証する。
 
-子processから`NODE_TEST_CONTEXT`だけを除外して実Runner相当の独立processにし、回帰テストを有効化した。修正後はintegration / buildまで成功済み。
+隔離option:
 
-## Admin Challenge async Repository（PR #140でmerge済み）
+- network none。
+- read-only root filesystem / workspace。
+- tmpfsのみwrite可能。
+- capability全削除。
+- `no-new-privileges`。
+- non-root UID/GID `65534:65534`。
+- CPU / memory / pids / file descriptor上限。
+- host timeout + TERM/KILL。
+- stdout/stderr 256KiB上限。
+- shellを経由しない固定argv。
 
-- `createAdminChallengeRepository({ databaseClient })` factoryを追加済み。
-- Admin Challenge Repositoryから`getDb()` / `prepare()` / `run()`の直接依存を除去済み。
-- Challenge作成 + Version 1保存を同一transactionで処理する。
-- Version追加 + `current_version_id`更新を同一transactionで処理する。
-- Challenge Versionは既存Versionを書き換えず追加する。
-- SQLite / PostgreSQL共通Repository contract testを実行する。
-- PostgreSQLではChallenge row lock後に`MAX(version) + 1`を採番し、同時Version追加を直列化する。
+ただし本番WorkerへDocker socketを渡す設計は採用しない。Submitted codeからhidden test file自体を読めないfilesystem isolationも必要なため、PythonはIssue #145完了まで公開allowlistへ追加しない。
 
-## PostgreSQL実行基盤（PR #138でmerge済み）
+## PR #144の検証状況
 
-- PostgreSQL 18.4 / `pg` 8.22.0を固定。
-- 接続設定をfail-closedで検証する。
-- Production既定TLSは`verify-full`。
-- URL query parameter / fragmentによる接続設定上書きを拒否する。
-- Statement / lock timeoutを有限化する。
-- Migration executorは専用connection、search path固定、非待機advisory lockを使用する。
-- Migration単位transactionでDDLとhistory INSERTをatomic commitする。
-- Production runtimeのDB providerはこの基盤導入だけでは切り替えない。
+Code head `a7c99aad7e26044c943bb423bcfd01f1d87c572d`で以下を確認済み。
+
+- Docs validation: Success。
+- Frozen lockfile install: Success。
+- Lint: Success。
+- Typecheck: Success。
+- Unit test: Success。
+- Integration test: Success。
+- PostgreSQL 18.4 service integration: Success。
+- SQL starter failure / reference solution success: Success。
+- HTML/CSS starter failure / reference solution success: Success。
+- SQL / HTML-CSS API → queue → Worker E2E: Success。
+- Python Public API 400 fail-closed: Success。
+- Python固定Docker image pull + 実container contract: Success。
+- Schema validation: Success。
+- Infra validation: Success。
+- Build: Success。
+
+## 実装中に検出・修正した事項
+
+1. 存在しない`python:3.14.6-alpine3.22`指定を検出し、実pull確認済みの3.14.5 image digest固定へ変更。
+2. PR #142由来の「SQLは拒否する」旧unit testを、SQL解禁 / language spoof拒否 / Python fail-closed契約へ更新。
+3. Node系Runnerのvisible / hidden timeoutに対しintegration polling窓が不足していたため、既存fixtureを変更せずpolling上限のみ拡張。
+4. 自己レビューでPython Runnerの出力無制限・権限制約不足を検出し、capture上限・非root・capability drop・no-new-privileges等を追加。
+5. WorkerがSubmission languageをRunnerへ渡さずChallenge先頭languageを推測していたため、明示的に`submission.language`を渡し、複数対応Challengeの回帰テストを追加。
 
 ## Correctness・セキュリティ境界
 
-- Challenge更新はVersion追加方式を維持する。
-- Submissionとqueue outboxのatomic commitを維持する。
-- Processing lease / attempt fencing / completion guardを弱めない。
-- Exactly-once queue deliveryへ依存しない。
-- Queue / DB内部状態やhidden testsをlearnerへ返さない。
 - API processでsubmission codeを直接実行しない。
-- Public catalogへ採点不能言語を対応済みとして表示しない。
-- Problem JSON由来の任意commandをshellへ直接渡すRunnerへ拡張しない。
-- Query parameterをHTMLへ埋め込む前にescapeする。
-- Migration checksum driftを自動修復しない。
-- SQL、parameters、credentials、submitted code、hidden testsを新規ログへ出力しない。
-- DB cutoverとSQS transport切替を同じchange windowへ含めない。
+- Problem JSON由来の任意`testCommand` / `runCommand`をshell実行しない。
+- Hidden test source / hidden logsをlearnerへ返さない。
+- Unsupported languageをsubmission / outbox永続化前にfail-closed拒否する。
+- Workerでも同じlanguage policyを再確認する。
+- Submission + queue outbox atomicityを変更しない。
+- Processing lease / attempt fencing / completion guardを変更しない。
+- DB cutoverとqueue transport切替を同じchangeへ含めない。
+- Production runtimeはSQLite / HTTPを維持する。
 
-## 現時点の非対応
+## 次の候補
 
-- SQL / Python / HTML-CSS言語別Runner（Issue #143）
-- Public Challenge RepositoryのDB-backed化
-- Submission read / simple writeのasync DatabaseClient移行
-- Processing lease / attempt fencingのasync移行
-- Submission + queue outbox atomic transactionのasync移行
-- API / Worker composition rootのDB provider切替
-- Outbox claim / lease
-- RDS / Secrets Manager / security group IaC
-- SQLite export / PostgreSQL import / validation tool
-- API / Worker / Migrator ECS wiring
-- Staging cutover rehearsal / rollback drill
-- Production DB / SQS切替
+ユーザー価値:
 
-## 優先順位
-
-ユーザー価値の次候補:
-
-1. Issue #143: SQL / Python / HTML-CSS言語別Runner contract。
+1. Issue #145: Python Runner本番隔離実行基盤。
 2. Challenge tag検索 / 学習トラック。
 3. おすすめChallenge / 次に解く問題。
-4. 進捗ページを実submissionデータへ接続。
+4. 進捗ページの実submissionデータ化。
 
-基盤依存順:
+基盤依存:
 
-1. Submission read / simple writeをasync DatabaseClientへ移行する。
-2. Processing lease / attempt fencingをasync DatabaseClientへ移行する。
-3. Submission + queue outbox atomic transactionを移行する。
-4. API / Worker composition rootのprovider切替を実装する。
-5. Outbox claim / leaseを実装する。
-6. RDS / Secrets Manager / network IaCを追加する。
-7. Data migration toolとstaging cutover rehearsalを実施する。
-8. ECS one-shot MigratorとAPI / Worker wiringを追加する。
+1. Submission read / simple writeのasync DatabaseClient移行。
+2. Processing lease / attempt fencingのasync移行。
+3. Submission + queue outbox atomic transactionのasync移行。
+4. API / Worker composition root provider切替。
+5. Outbox claim / lease。
+6. RDS / Secrets Manager / network IaC。
+7. Data migration / staging rehearsal。
 
 ## 参照先
 
-- Issue #141: `https://github.com/mizzz-ivr/ai-code-dojo/issues/141`
 - PR #142: `https://github.com/mizzz-ivr/ai-code-dojo/pull/142`
 - Issue #143: `https://github.com/mizzz-ivr/ai-code-dojo/issues/143`
-- Public Challenge catalog: `docs/architecture/public-challenge-catalog.md`
-- Issue #139: `https://github.com/mizzz-ivr/ai-code-dojo/issues/139`
-- PR #140: `https://github.com/mizzz-ivr/ai-code-dojo/pull/140`
-- Admin Challenge async repository: `docs/architecture/admin-challenge-async-repository.md`
-- DB adapter contract: `docs/architecture/database-client-adapter-contract.md`
-- PostgreSQL executor: `docs/architecture/postgresql-migration-executor.md`
+- PR #144: `https://github.com/mizzz-ivr/ai-code-dojo/pull/144`
+- Issue #145: `https://github.com/mizzz-ivr/ai-code-dojo/issues/145`
+- Runner設計: `docs/architecture/language-runner-contracts.md`
+- Public catalog: `docs/architecture/public-challenge-catalog.md`

@@ -1,7 +1,9 @@
-export const RUNNABLE_CHALLENGE_LANGUAGES = Object.freeze([
-  'javascript',
-  'typescript'
-]);
+import {
+  PUBLIC_RUNNER_LANGUAGES,
+  isPublicRunnerLanguage
+} from './runner-contract.mjs';
+
+export const RUNNABLE_CHALLENGE_LANGUAGES = PUBLIC_RUNNER_LANGUAGES;
 
 const getSupportedLanguages = (challenge) => {
   const languages = challenge?.supportedLanguages
@@ -10,9 +12,7 @@ const getSupportedLanguages = (challenge) => {
   return Array.isArray(languages) ? languages : [];
 };
 
-export const isRunnableChallengeLanguage = (language) =>
-  typeof language === 'string'
-  && RUNNABLE_CHALLENGE_LANGUAGES.includes(language);
+export const isRunnableChallengeLanguage = (language) => isPublicRunnerLanguage(language);
 
 export const isChallengeRunnable = (challenge) => {
   const languages = getSupportedLanguages(challenge);
@@ -22,5 +22,6 @@ export const isChallengeRunnable = (challenge) => {
 
 export const canSubmitChallengeLanguage = (challenge, language) => {
   if (!isChallengeRunnable(challenge)) return false;
+  if (challenge?.runnerConfig && challenge.runnerConfig.networkAccess !== 'disabled') return false;
   return getSupportedLanguages(challenge).includes(language);
 };

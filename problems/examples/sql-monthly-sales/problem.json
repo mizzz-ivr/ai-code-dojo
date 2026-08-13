@@ -18,17 +18,20 @@
     "background": "分析チームが月次売上レポートを運用しており、既存SQLの改修が必要です。",
     "issue": "orders テーブルから月次売上を集計するクエリが未完成で、期待フォーマットを満たしていません。",
     "acceptanceCriteria": [
-      "月単位で売上合計を集計する",
+      "created_at の年月を YYYY-MM 形式の month として集約する",
+      "amount の合計を total_amount として返す",
       "month カラム昇順で結果を返す",
-      "NULL 値を除外した合計を返す"
+      "NULL の amount を売上合計へ含めない"
     ],
     "outOfScope": [
       "時区間のタイムゾーン補正",
-      "複数通貨換算"
+      "複数通貨換算",
+      "データ更新・DDL"
     ]
   },
   "learningPoints": [
     "GROUP BY と ORDER BY の基本運用",
+    "NULLを含む集計の扱い",
     "期待出力を満たすSQLレビュー観点の習得"
   ],
   "starterCode": [
@@ -37,20 +40,20 @@
       "readonly": false
     },
     {
-      "path": "tests/visible/expected.csv",
+      "path": "tests/visible/query.visible.test.mjs",
       "readonly": true
     }
   ],
   "visibleTests": [
-    "tests/visible/expected.csv"
+    "tests/visible/query.visible.test.mjs"
   ],
   "hiddenTests": [
-    "tests/hidden/assertion.md"
+    "tests/hidden/query.hidden.test.mjs"
   ],
   "runnerConfig": {
-    "buildCommand": "echo 'sql problem has no build step'",
-    "testCommand": "python run_sql_tests.py",
-    "runCommand": "sqlite3 :memory: < starter/query.sql",
+    "buildCommand": "runner-managed:no-build",
+    "testCommand": "runner-managed:sqlite-readonly",
+    "runCommand": "runner-managed:sqlite-readonly",
     "timeoutSeconds": 5,
     "networkAccess": "disabled"
   },
@@ -63,7 +66,8 @@
     "language": "ja",
     "focusPoints": [
       "要件充足",
-      "テスト"
+      "テスト",
+      "参照専用SQL"
     ]
   }
 }

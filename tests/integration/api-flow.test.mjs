@@ -18,7 +18,7 @@ const waitForHealth = async (url, retries = 30) => {
 
 const startServer = (cmd, args, env) => spawn(cmd, args, { env: { ...process.env, ...env }, stdio: 'ignore' });
 
-const fetchSubmissionResultUntilCompleted = async (submissionId, headers = {}, retries = 80) => {
+const fetchSubmissionResultUntilCompleted = async (submissionId, headers = {}, retries = 160) => {
   const terminalStatuses = new Set(['completed', 'failed', 'infra_failed']);
   let resultData;
   for (let i = 0; i < retries; i += 1) {
@@ -27,7 +27,7 @@ const fetchSubmissionResultUntilCompleted = async (submissionId, headers = {}, r
     if (resultData.result && terminalStatuses.has(resultData.status)) return resultData;
     await sleep(100);
   }
-  return resultData;
+  throw new Error(`submission completion timeout: ${submissionId} (${resultData?.status ?? 'unknown'})`);
 };
 
 const assertLearnerSafeBoundary = (resultData) => {

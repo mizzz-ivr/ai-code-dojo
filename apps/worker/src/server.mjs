@@ -331,12 +331,14 @@ const processSubmission = async ({ submissionId, gradingAttempt, attemptIdempote
       ? await runJavaScriptChallengeViaIsolatedJob({
           challenge,
           challengeBasePath,
-          code: submission.code
+          code: submission.code,
+          language: submission.language
         })
       : await runJavaScriptChallenge({
           challenge,
           challengeBasePath,
-          code: submission.code
+          code: submission.code,
+          language: submission.language
         });
 
     if (!heartbeatController.hasOwnership()) {
