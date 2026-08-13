@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createPythonRunnerServer } from '../../apps/python-runner/src/server.mjs';
-import { createPythonRunnerSignature } from '../../apps/python-runner/src/auth.mjs';
+import { createPythonRunnerSignature } from '../../packages/runner-sdk/src/python-remote-auth.mjs';
 import { runPythonChallengeRemotely } from '../../apps/worker/src/services/python-remote-runner-client.mjs';
 
 const enabled = process.env.RUNNER_PYTHON_CONTAINER_CONTRACT === '1';

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createPythonRunnerSignature, verifyPythonRunnerSignature } from '../../apps/python-runner/src/auth.mjs';
+import { createPythonRunnerSignature, verifyPythonRunnerSignature } from '../../packages/runner-sdk/src/python-remote-auth.mjs';
 import { createPythonRunnerJobRegistry, PythonRunnerBusyError, PythonRunnerIdempotencyConflictError } from '../../apps/python-runner/src/services/job-registry.mjs';
 import { loadPythonRemoteRunnerConfig } from '../../apps/worker/src/config/python-remote-runner-config.mjs';
 import { runPythonChallengeRemotely } from '../../apps/worker/src/services/python-remote-runner-client.mjs';

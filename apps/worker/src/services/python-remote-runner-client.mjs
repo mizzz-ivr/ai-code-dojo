@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { createPythonRunnerSignature } from '../../../python-runner/src/auth.mjs';
+import { createPythonRunnerSignature } from '../../../../packages/runner-sdk/src/python-remote-auth.mjs';
 import { loadPythonRemoteRunnerConfig } from '../config/python-remote-runner-config.mjs';
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
