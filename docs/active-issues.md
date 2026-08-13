@@ -17,7 +17,7 @@
 ### #145 Python Runnerの本番隔離実行基盤を導入する
 
 - 優先度: P1
-- 状態: Open / PR #146 Draft（最終CI成功、Ready移行前）
+- 状態: Open / PR #146 Ready for review / mergeable
 - GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/145`
 - GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/146`
 - Branch: `feat/python-remote-isolation-runner`
@@ -51,7 +51,7 @@ Issue #143で追加したPython isolated-previewを、WorkerへDocker socketを�
 
 #### CI状況
 
-head `41517264580678372428b8d3df0d4b0e9dff0699`で以下がすべてSuccess。
+Ready移行前のcode/docs head `3b5a83fe13ec8d9f9febfdf1d0aec30fb3ec5a47`で以下がすべてSuccess。
 
 - Docs validation
 - Frozen lockfile install
