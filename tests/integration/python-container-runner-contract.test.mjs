@@ -36,9 +36,25 @@ def classify_score(score: int) -> str:
     return "D"
 `;
 
-test('Python隔離Runnerでstarter failure / reference solution successを確認する', { skip: !enabled }, async () => {
+const syntaxErrorSubmission = `def classify_score(score):
+    return (
+`;
+
+const timeoutSubmission = `while True:
+    pass
+
+def classify_score(score):
+    return "A"
+`;
+
+const loadChallenge = async () => {
   const challengeBasePath = path.resolve('problems/examples/python-bugfix-score-buckets');
   const challenge = JSON.parse(await readFile(path.join(challengeBasePath, 'problem.json'), 'utf8'));
+  return { challengeBasePath, challenge };
+};
+
+test('Python隔離Runnerでstarter failure / reference solution successを確認する', { skip: !enabled }, async () => {
+  const { challengeBasePath, challenge } = await loadChallenge();
   const starter = await readFile(path.join(challengeBasePath, 'starter/score.py'), 'utf8');
 
   const starterResult = await runPythonCaseChallenge({ challenge, challengeBasePath, code: starter });
@@ -51,10 +67,29 @@ test('Python隔離Runnerでstarter failure / reference solution successを確認
 });
 
 test('submitted codeからhidden test filesystemを参照できない', { skip: !enabled }, async () => {
-  const challengeBasePath = path.resolve('problems/examples/python-bugfix-score-buckets');
-  const challenge = JSON.parse(await readFile(path.join(challengeBasePath, 'problem.json'), 'utf8'));
+  const { challengeBasePath, challenge } = await loadChallenge();
   const result = await runPythonCaseChallenge({ challenge, challengeBasePath, code: filesystemProbeSolution });
 
   assert.equal(result.score, 100);
   assert.equal(result.logs.some((log) => /score_hidden|hidden_cases|expected/i.test(log)), false);
+});
+
+test('SyntaxErrorとtimeoutはinfra retryではなくterminal grading failureとして返す', { skip: !enabled }, async () => {
+  const { challengeBasePath, challenge } = await loadChallenge();
+
+  const syntaxResult = await runPythonCaseChallenge({ challenge, challengeBasePath, code: syntaxErrorSubmission });
+  assert.equal(syntaxResult.status, 'completed');
+  assert.equal(syntaxResult.score, 0);
+
+  const shortTimeoutChallenge = {
+    ...challenge,
+    runnerConfig: { ...challenge.runnerConfig, timeoutSeconds: 0.2 }
+  };
+  const timeoutResult = await runPythonCaseChallenge({
+    challenge: shortTimeoutChallenge,
+    challengeBasePath,
+    code: timeoutSubmission
+  });
+  assert.equal(timeoutResult.status, 'completed');
+  assert.equal(timeoutResult.score, 0);
 });

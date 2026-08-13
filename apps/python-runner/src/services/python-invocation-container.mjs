@@ -9,6 +9,7 @@ export const MAX_PYTHON_CODE_BYTES = 64 * 1024;
 const MAX_CAPTURE_BYTES = 256 * 1024;
 const MAX_CALLS_PER_BATCH = 64;
 const FUNCTION_PATTERN = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+const DOCKER_INFRA_FAILURE_EXIT_CODES = new Set([125, 126, 127]);
 
 const HARNESS_SOURCE = `import contextlib
 import importlib.util
@@ -72,6 +73,11 @@ const validateCalls = (calls) => {
     return { id: call.id, function: call.function, args, kwargs };
   });
 };
+
+const createTerminalFailure = (calls, errorType, diagnostics) => ({
+  results: calls.map((call) => ({ id: call.id, ok: false, errorType })),
+  diagnostics
+});
 
 export const buildPythonInvocationContainerArgs = ({
   workingDirectory,
@@ -145,7 +151,6 @@ export const runPythonInvocationBatchInContainer = async ({
     return await new Promise((resolve, reject) => {
       const child = spawnImpl('docker', args, { stdio: ['pipe', 'pipe', 'pipe'] });
       let stdout = '';
-      let stderr = '';
       let settled = false;
       let killTimer;
 
@@ -158,22 +163,28 @@ export const runPythonInvocationBatchInContainer = async ({
       };
 
       const timeoutTimer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
         child.kill?.('SIGTERM');
         killTimer = setTimeout(() => child.kill?.('SIGKILL'), 1000);
         void removeContainer({ containerName, spawnImpl }).then(() => {
-          settle(() => reject(new Error('python sandbox timeout')));
+          if (killTimer) clearTimeout(killTimer);
+          resolve(createTerminalFailure(validatedCalls, 'TimeoutError', 'timeout'));
         });
       }, timeoutMs + 1000);
 
       child.stdout?.on('data', (chunk) => { stdout = appendLimited(stdout, chunk); });
-      child.stderr?.on('data', (chunk) => { stderr = appendLimited(stderr, chunk); });
       child.on('error', () => settle(() => reject(new Error('python sandbox unavailable'))));
       child.stdin?.on('error', () => {});
       child.stdin?.end(payload, 'utf8');
       child.on('close', (code) => {
         if (settled) return;
+        if (DOCKER_INFRA_FAILURE_EXIT_CODES.has(code)) {
+          settle(() => reject(new Error('python sandbox unavailable')));
+          return;
+        }
         if (code !== 0) {
-          settle(() => reject(new Error('python sandbox execution failed')));
+          settle(() => resolve(createTerminalFailure(validatedCalls, 'RuntimeError', 'runtime-failed')));
           return;
         }
         try {
@@ -181,9 +192,9 @@ export const runPythonInvocationBatchInContainer = async ({
           if (!Array.isArray(parsed?.results) || parsed.results.length !== validatedCalls.length) {
             throw new Error('invalid result');
           }
-          settle(() => resolve({ results: parsed.results, diagnostics: stderr ? 'stderr-captured' : 'ok' }));
+          settle(() => resolve({ results: parsed.results, diagnostics: 'ok' }));
         } catch {
-          settle(() => reject(new Error('python sandbox returned invalid result')));
+          settle(() => resolve(createTerminalFailure(validatedCalls, 'ProtocolError', 'protocol-failed')));
         }
       });
     });
