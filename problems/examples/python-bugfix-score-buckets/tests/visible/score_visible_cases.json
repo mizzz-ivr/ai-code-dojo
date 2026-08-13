@@ -1,0 +1,8 @@
+{
+  "cases": [
+    { "id": "representative-a", "function": "classify_score", "args": [95], "expected": "A" },
+    { "id": "representative-b", "function": "classify_score", "args": [85], "expected": "B" },
+    { "id": "representative-c", "function": "classify_score", "args": [70], "expected": "C" },
+    { "id": "representative-d", "function": "classify_score", "args": [50], "expected": "D" }
+  ]
+}
