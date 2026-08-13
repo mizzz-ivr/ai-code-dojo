@@ -74,7 +74,7 @@ test('concurrency + queue上限を超えたjobをbusyで拒否する', async () 
   await first;
 });
 
-test('Worker clientは署名付きrequestを送りraw secret/codeをerrorへ出さない', async () => {
+test('Worker clientは署名付きrequestを送りraw secretをheaderへ露出しない', async () => {
   const challenge = { metadata: { slug: 'python-bugfix-score-buckets' } };
   const code = 'def classify_score(score):\n    return "A"\n';
   let request;
@@ -97,6 +97,6 @@ test('Worker clientは署名付きrequestを送りraw secret/codeをerrorへ出�
   assert.equal(request.url, 'http://localhost:8090/v1/jobs');
   assert.equal(request.init.headers['x-runner-idempotency-key'], 'attempt-key-1');
   assert.match(request.init.headers['x-runner-signature'], /^[a-f0-9]{64}$/);
-  assert.equal(request.init.body.includes(code), true);
-  assert.equal(request.init.headers['x-runner-signature'].includes(secret), false);
+  assert.equal(JSON.parse(request.init.body).code, code);
+  assert.equal(Object.values(request.init.headers).some((value) => String(value).includes(secret)), false);
 });

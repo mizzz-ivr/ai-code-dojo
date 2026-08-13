@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -138,6 +138,7 @@ export const runPythonInvocationBatchInContainer = async ({
   try {
     await writeFile(path.join(tmpRoot, 'submission.py'), code, { encoding: 'utf8', mode: 0o444 });
     await writeFile(path.join(tmpRoot, 'invoke.py'), HARNESS_SOURCE, { encoding: 'utf8', mode: 0o444 });
+    await chmod(tmpRoot, 0o555);
     const payload = JSON.stringify({ calls: validatedCalls });
     const args = buildPythonInvocationContainerArgs({ workingDirectory: tmpRoot, containerName });
 
@@ -187,6 +188,7 @@ export const runPythonInvocationBatchInContainer = async ({
       });
     });
   } finally {
+    await chmod(tmpRoot, 0o700).catch(() => {});
     await rm(tmpRoot, { recursive: true, force: true });
   }
 };
