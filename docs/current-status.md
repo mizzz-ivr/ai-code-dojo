@@ -1,6 +1,6 @@
 # current-status（正本）
 
-最終更新: 2026-08-12（Issue #143 / PR #144 言語別Runner contract）
+最終更新: 2026-08-13（Issue #145 / PR #146 Python Remote Runner）
 
 ## この文書の目的
 
@@ -10,13 +10,11 @@
 
 - Repository: `mizzz-ivr/ai-code-dojo`。
 - AI生成コードのバグ修正・機能追加を実務フローで学ぶ練習プラットフォームとしてMVP開発中。
-- PR #142は2026-08-12にmerge済み。公開Challenge検索・絞り込み、JS/TS実践問題4件、TypeScript実採点をmainへ反映済み。
-- Issue #143 / PR #144で言語別Runner contractを実装中。
-- Public Challengeは7件から9件へ拡充予定。
-- SQL / HTML-CSSはPR #144で公開提出可能にする。
-- PythonはChallengeと隔離Runner contractを追加するが、本番隔離基盤が未整備のためPublic APIではfail-closed拒否する。
-- Python本番公開はIssue #145で後続管理する。
-- Linearは無料Issue上限のため、Issue #143 / #145はGitHub Issue / Repository docsを管理正本とする。
+- PR #142はmerge済み。公開Challenge検索・絞り込み、JS/TS実践問題4件、TypeScript実採点を反映済み。
+- PR #144は2026-08-13にmerge済み。SQL / HTML-CSS Runner、Python isolated-preview、公開Challenge 9件をmainへ反映済み。
+- Issue #145 / PR #146でPython Remote Runner境界とhidden test filesystem isolationを実装中。
+- Pythonは引き続きPublic APIでfail-closed拒否する。Actual AWS / staging隔離環境を明示承認付きで検証するまでは公開allowlistへ追加しない。
+- Linearは無料Issue上限のため、Issue #145はGitHub Issue / Repository docs / Notionを管理正本とする。
 
 ## 現行runtime
 
@@ -25,113 +23,96 @@
 - Public Challenge Repository: `problems/examples/*/problem.json`のfile-backed実装。
 - Admin Challenge Repository: DB-backed / async DatabaseClient。
 - Submission / lease / outbox Repository: 同期SQLite固有APIを継続。
-- PostgreSQL 18.4のmigration / integration基盤は利用可能だが、本番DB切替は未実施。
-- RDS / ECS / Secrets Managerの本番resourceは未作成。
+- PostgreSQL 18.4 migration / integration基盤は利用可能だが、本番DB切替は未実施。
+- RDS / ECS / Secrets ManagerのActual AWS resourceは未作成・未変更。
 
-## Public Challenge
+## Public Challenge / Runner
 
-PR #142 merge後: 7件。
-
-PR #144追加:
-
-- `html-css-feature-profile-card`: medium / feature / HTML-CSS。
-- `python-bugfix-score-buckets`: medium / bugfix / Python。公開提出はまだ不可。
-
-PR #144 merge後のfile-backed content: 9件。
-
-既存`sql-monthly-sales`はPR #144で安全なSQLite evaluatorへ移行し、提出可能化する。
-
-## 言語別Runner contract
-
-正本: `packages/runner-sdk/src/runner-contract.mjs`。
+File-backed Challengeは9件。
 
 | language | Runner | 公開状態 |
 | --- | --- | --- |
 | JavaScript | `node-test` | 提出可能 |
 | TypeScript | `node-test` | 提出可能 |
-| SQL | `sqlite-readonly` | PR #144 merge後に提出可能 |
-| HTML/CSS | `html-css-static` | PR #144 merge後に提出可能 |
-| Python | `python-container` | isolated-preview / 提出不可 |
+| SQL | `sqlite-readonly` | 提出可能 |
+| HTML/CSS | `html-css-static` | 提出可能 |
+| Python | `python-container` via Remote Runner | isolated-preview / 提出不可 |
 
-Web / API / Workerは同じRunner contractからpublic allowlistを取得する。
+Python Challenge `python-bugfix-score-buckets`はcontentとして存在するが、Public APIでは400で拒否する。
 
-WorkerはAPIで検証済みの`submission.language`をRunnerへ明示的に渡し、ChallengeのsupportedLanguages先頭要素へ暗黙依存しない。
+## PR #146 Python Remote Runner
 
-## SQL Runner
+### 実装済み境界
 
-- Submitted SQLをJavaScriptやshellとして実行しない。
-- 単一statement、最大32KiB。
-- `SELECT` / `WITH`のみ許可。
-- DDL / DML、`ATTACH` / `DETACH` / `PRAGMA` / `VACUUM`等を拒否。
-- trusted Node testが`node:sqlite`のin-memory DBへfixtureを作成して評価する。
-- visible / hidden testを分離し、hidden logをlearnerへ返さない。
+- `apps/python-runner`をWorkerと分離した専用Remote Runner serviceとして追加。
+- WorkerからPython用Docker実行コードを削除し、署名付きHTTP clientだけを保持。
+- HMAC SHA-256署名契約を`packages/runner-sdk`へ配置。
+- ProductionのRemote Runner URLはHTTPS必須。
+- URL credentials / query / fragmentを拒否。
+- timestamp / idempotency key / bodyを署名対象にする。
+- request / response size、timeout、concurrency、queueを有限化。
+- 同一idempotency key + 同一payloadは結果を再利用し、payload差し替えは409拒否。
+- Python imageはdigest固定。
+- network none / read-only / non-root / cap-drop / no-new-privileges / CPU / memory / pids / fd / timeoutを維持。
+- timeout時のcontainer強制削除とlabelによるorphan cleanup境界を追加。
+- 提出コード由来のSyntaxError / runtime failure / timeout / protocol failureはterminal grading failureとして0点で終了し、不要なinfra retryを発生させない。
+- Docker起動不可など実行基盤側の失敗だけをinfra failureとして扱う。
 
-## HTML/CSS Runner
+### Hidden test filesystem isolation
 
-- Submitted HTML/CSSをブラウザやJavaScriptとして実行しない。
-- trusted Node testから静的構造・CSS rule・アクセシビリティ条件を検証する。
-- MVPではbrowser rendering / visual regressionは対象外。
+Python Challengeのtest contractを`.py`テスト直接実行からJSON case + trusted comparatorへ変更した。
 
-## Python Runner preview
+Python sandboxへmountするのは次だけ。
 
-固定image:
+- `submission.py`
+- 汎用`invoke.py`
 
-`python:3.14.5-alpine3.22@sha256:6b91e66ab2a880ce9ca5a1b91c70f45963ff71ff68268df056336e1a657d5efd`
+visible / hidden case定義、期待値、hidden test sourceはRemote Runnerの信頼側Node processだけが保持する。submitted codeから`/workspace`を走査するintegration testでもhidden/test/case fileが見えないことを確認する。
 
-CIでは実Docker containerでstarter failure / reference solution successを検証する。
+### CIで確認済みの経路
 
-隔離option:
+code head `41517264580678372428b8d3df0d4b0e9dff0699`で以下がすべて成功済み。
 
-- network none。
-- read-only root filesystem / workspace。
-- tmpfsのみwrite可能。
-- capability全削除。
-- `no-new-privileges`。
-- non-root UID/GID `65534:65534`。
-- CPU / memory / pids / file descriptor上限。
-- host timeout + TERM/KILL。
-- stdout/stderr 256KiB上限。
-- shellを経由しない固定argv。
+- Docs validation
+- Frozen lockfile install
+- Lint
+- Typecheck
+- Unit test
+- Integration test
+- Schema validation
+- Infra validation
+- Build
+- PostgreSQL 18.4 integration
+- Python starter failure / reference solution success
+- submitted codeからhidden test filesystemを参照できないこと
+- Worker client → HTTP Remote Runner → actual Docker → Python sandbox
+- HMAC不正401
+- idempotency payload差し替え409
+- SyntaxErrorをterminal 0点として扱うこと
+- timeoutをterminal 0点として扱うこと
 
-ただし本番WorkerへDocker socketを渡す設計は採用しない。Submitted codeからhidden test file自体を読めないfilesystem isolationも必要なため、PythonはIssue #145完了まで公開allowlistへ追加しない。
+## Issue #145でまだ未完了の事項
 
-## PR #144の検証状況
+- Actual AWS / staging Remote Runner resource作成。
+- Secrets Manager等によるshared secret配布・rotation。
+- TLS endpoint / security group / task roleのreview-only IaC。
+- stagingでのadversarial code検証。
+- 実インフラ上のconcurrency / quota / cost上限確認。
+- 複数Remote Runner instanceを跨ぐ重複実行の運用評価。
+- 上記完了後のPython Public allowlist有効化。
 
-Code head `a7c99aad7e26044c943bb423bcfd01f1d87c572d`で以下を確認済み。
-
-- Docs validation: Success。
-- Frozen lockfile install: Success。
-- Lint: Success。
-- Typecheck: Success。
-- Unit test: Success。
-- Integration test: Success。
-- PostgreSQL 18.4 service integration: Success。
-- SQL starter failure / reference solution success: Success。
-- HTML/CSS starter failure / reference solution success: Success。
-- SQL / HTML-CSS API → queue → Worker E2E: Success。
-- Python Public API 400 fail-closed: Success。
-- Python固定Docker image pull + 実container contract: Success。
-- Schema validation: Success。
-- Infra validation: Success。
-- Build: Success。
-
-## 実装中に検出・修正した事項
-
-1. 存在しない`python:3.14.6-alpine3.22`指定を検出し、実pull確認済みの3.14.5 image digest固定へ変更。
-2. PR #142由来の「SQLは拒否する」旧unit testを、SQL解禁 / language spoof拒否 / Python fail-closed契約へ更新。
-3. Node系Runnerのvisible / hidden timeoutに対しintegration polling窓が不足していたため、既存fixtureを変更せずpolling上限のみ拡張。
-4. 自己レビューでPython Runnerの出力無制限・権限制約不足を検出し、capture上限・非root・capability drop・no-new-privileges等を追加。
-5. WorkerがSubmission languageをRunnerへ渡さずChallenge先頭languageを推測していたため、明示的に`submission.language`を渡し、複数対応Challengeの回帰テストを追加。
+Actual AWS変更は明示承認なしに実施しない。
 
 ## Correctness・セキュリティ境界
 
 - API processでsubmission codeを直接実行しない。
-- Problem JSON由来の任意`testCommand` / `runCommand`をshell実行しない。
+- WorkerへDocker socketを公開しない。
+- Problem JSON由来の任意commandをshell実行しない。
 - Hidden test source / hidden logsをlearnerへ返さない。
 - Unsupported languageをsubmission / outbox永続化前にfail-closed拒否する。
-- Workerでも同じlanguage policyを再確認する。
 - Submission + queue outbox atomicityを変更しない。
 - Processing lease / attempt fencing / completion guardを変更しない。
+- ユーザーコード起因failureをinfra retryへ誤分類しない。
 - DB cutoverとqueue transport切替を同じchangeへ含めない。
 - Production runtimeはSQLite / HTTPを維持する。
 
@@ -139,10 +120,11 @@ Code head `a7c99aad7e26044c943bb423bcfd01f1d87c572d`で以下を確認済み。
 
 ユーザー価値:
 
-1. Issue #145: Python Runner本番隔離実行基盤。
-2. Challenge tag検索 / 学習トラック。
-3. おすすめChallenge / 次に解く問題。
-4. 進捗ページの実submissionデータ化。
+1. Issue #145のreview-only AWS / staging設計と隔離検証。
+2. Python Challenge追加（公開gateは維持したままcontentを増やせる）。
+3. Challenge tag検索 / 学習トラック。
+4. おすすめChallenge / 次に解く問題。
+5. 進捗ページの実submissionデータ化。
 
 基盤依存:
 
@@ -156,9 +138,8 @@ Code head `a7c99aad7e26044c943bb423bcfd01f1d87c572d`で以下を確認済み。
 
 ## 参照先
 
-- PR #142: `https://github.com/mizzz-ivr/ai-code-dojo/pull/142`
-- Issue #143: `https://github.com/mizzz-ivr/ai-code-dojo/issues/143`
-- PR #144: `https://github.com/mizzz-ivr/ai-code-dojo/pull/144`
 - Issue #145: `https://github.com/mizzz-ivr/ai-code-dojo/issues/145`
+- PR #146: `https://github.com/mizzz-ivr/ai-code-dojo/pull/146`
+- PR #144: `https://github.com/mizzz-ivr/ai-code-dojo/pull/144`
+- Python Remote Runner設計: `docs/architecture/python-remote-runner.md`
 - Runner設計: `docs/architecture/language-runner-contracts.md`
-- Public catalog: `docs/architecture/public-challenge-catalog.md`

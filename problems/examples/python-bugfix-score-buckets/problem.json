@@ -31,7 +31,7 @@
   "learningPoints": [
     "条件分岐の境界値設計",
     "入力バリデーション",
-    "Python unittestによる回帰テスト"
+    "hidden testを直接参照しない関数単位の回帰テスト"
   ],
   "starterCode": [
     {
@@ -39,20 +39,20 @@
       "readonly": false
     },
     {
-      "path": "tests/visible/score_visible_test.py",
+      "path": "tests/visible/score_visible_cases.json",
       "readonly": true
     }
   ],
   "visibleTests": [
-    "tests/visible/score_visible_test.py"
+    "tests/visible/score_visible_cases.json"
   ],
   "hiddenTests": [
-    "tests/hidden/score_hidden_test.py"
+    "tests/hidden/score_hidden_cases.json"
   ],
   "runnerConfig": {
     "buildCommand": "runner-managed:no-build",
-    "testCommand": "runner-managed:python-container",
-    "runCommand": "runner-managed:python-container",
+    "testCommand": "runner-managed:python-remote-cases",
+    "runCommand": "runner-managed:python-remote-cases",
     "timeoutSeconds": 5,
     "networkAccess": "disabled"
   },

@@ -10,11 +10,11 @@ export const runJavaScriptChallenge = async (input) => runChallenge({
   language: input.language ?? inferLanguage(input.challenge)
 });
 
-export const runJavaScriptChallengeViaIsolatedJob = async ({ challenge, challengeBasePath, code, language }) => {
+export const runJavaScriptChallengeViaIsolatedJob = async ({ challenge, challengeBasePath, code, language, jobContext }) => {
   const resolvedLanguage = language ?? inferLanguage(challenge);
   const contract = getRunnerContract(resolvedLanguage);
   if (contract && contract.kind !== RUNNER_KINDS.NODE_TEST) {
-    return runChallenge({ challenge, challengeBasePath, code, language: resolvedLanguage });
+    return runChallenge({ challenge, challengeBasePath, code, language: resolvedLanguage, jobContext });
   }
   return runJavaScriptChallengeViaIsolatedJobWithSpawn({
     challenge,

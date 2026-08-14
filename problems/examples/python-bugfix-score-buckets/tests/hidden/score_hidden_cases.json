@@ -1,0 +1,14 @@
+{
+  "cases": [
+    { "id": "boundary-zero", "function": "classify_score", "args": [0], "expected": "D" },
+    { "id": "boundary-59", "function": "classify_score", "args": [59], "expected": "D" },
+    { "id": "boundary-60", "function": "classify_score", "args": [60], "expected": "C" },
+    { "id": "boundary-79", "function": "classify_score", "args": [79], "expected": "C" },
+    { "id": "boundary-80", "function": "classify_score", "args": [80], "expected": "B" },
+    { "id": "boundary-89", "function": "classify_score", "args": [89], "expected": "B" },
+    { "id": "boundary-90", "function": "classify_score", "args": [90], "expected": "A" },
+    { "id": "boundary-100", "function": "classify_score", "args": [100], "expected": "A" },
+    { "id": "reject-negative", "function": "classify_score", "args": [-1], "expectedError": "ValueError" },
+    { "id": "reject-over-100", "function": "classify_score", "args": [101], "expectedError": "ValueError" }
+  ]
+}
