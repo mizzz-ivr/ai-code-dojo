@@ -1,0 +1,947 @@
+{
+"AWSTemplateFormatVersion": "2010-09-09",
+"Description": "Review-only staging infrastructure for the isolated ai-code-dojo Python Remote Runner on dedicated ECS/EC2 capacity",
+"Metadata": {
+"DeploymentSafety": {
+"Mode": "review-only",
+"RequiresExplicitApproval": true,
+"PythonPublicGate": "disabled",
+"RuntimeModel": "dedicated-ecs-ec2-docker-host"
+}
+},
+"Parameters": {
+"EnvironmentName": {
+"Type": "String",
+"Default": "staging",
+"AllowedPattern": "^[a-z][a-z0-9-]{1,18}[a-z0-9]$",
+"ConstraintDescription": "Use 3-20 lowercase alphanumeric or hyphen characters, starting with a letter and ending with an alphanumeric character."
+},
+"VpcId": {
+"Type": "AWS::EC2::VPC::Id",
+"Description": "Existing VPC for the staging Worker and Python Remote Runner."
+},
+"PrivateSubnetIds": {
+"Type": "List<AWS::EC2::Subnet::Id>",
+"Description": "At least two private subnets in different Availability Zones for the internal ALB and the dedicated runner host."
+},
+"PrivateHostedZoneId": {
+"Type": "AWS::Route53::HostedZone::Id",
+"Description": "Existing private hosted zone associated with VpcId."
+},
+"RunnerDnsName": {
+"Type": "String",
+"AllowedPattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$",
+"ConstraintDescription": "Use a lowercase fully-qualified private DNS name covered by CertificateArn."
+},
+"CertificateArn": {
+"Type": "String",
+"AllowedPattern": "^arn:aws[a-zA-Z-]*:acm:[a-z0-9-]+:[0-9]{12}:certificate/[0-9a-fA-F-]+$",
+"ConstraintDescription": "Use an ACM certificate ARN whose SAN/CN covers RunnerDnsName."
+},
+"RunnerServiceImageUri": {
+"Type": "String",
+"AllowedPattern": "^[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$",
+"ConstraintDescription": "Use a private ECR image URI pinned by sha256 digest. The image must contain the repository, Node.js runtime, and Docker CLI."
+},
+"RunnerInstanceType": {
+"Type": "String",
+"Default": "t3.small",
+"AllowedValues": [
+"t3.small",
+"t3.medium"
+],
+"Description": "Staging-only runner host size. The Auto Scaling group is fixed at one instance."
+},
+"EcsOptimizedAmiId": {
+"Type": "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>",
+"Default": "/aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id",
+"Description": "Latest recommended Amazon ECS-optimized Amazon Linux 2023 AMI."
+}
+},
+"Resources": {
+"RunnerSharedSecret": {
+"Type": "AWS::SecretsManager::Secret",
+"DeletionPolicy": "Retain",
+"UpdateReplacePolicy": "Retain",
+"Properties": {
+"Description": "HMAC shared secret for ai-code-dojo Worker to Python Remote Runner authentication",
+"GenerateSecretString": {
+"PasswordLength": 64,
+"ExcludePunctuation": true
+},
+"Tags": [
+{
+"Key": "Application",
+"Value": "ai-code-dojo"
+},
+{
+"Key": "Environment",
+"Value": {
+"Ref": "EnvironmentName"
+}
+},
+{
+"Key": "SecretPurpose",
+"Value": "python-runner-hmac"
+}
+]
+}
+},
+"RunnerAlbSecurityGroup": {
+"Type": "AWS::EC2::SecurityGroup",
+"Properties": {
+"GroupDescription": "Internal ALB ingress for ai-code-dojo Python Remote Runner",
+"VpcId": {
+"Ref": "VpcId"
+},
+"Tags": [
+{
+"Key": "Application",
+"Value": "ai-code-dojo"
+},
+{
+"Key": "Environment",
+"Value": {
+"Ref": "EnvironmentName"
+}
+},
+{
+"Key": "SecurityGroupPurpose",
+"Value": "python-runner-alb"
+}
+],
+"SecurityGroupEgress": [
+{
+"IpProtocol": "-1",
+"CidrIp": "127.0.0.1/32",
+"Description": "Suppress default allow-all egress; intended egress is defined by standalone rules"
+}
+]
+}
+},
+"RunnerHostSecurityGroup": {
+"Type": "AWS::EC2::SecurityGroup",
+"Properties": {
+"GroupDescription": "Dedicated ECS EC2 host for ai-code-dojo Python Remote Runner",
+"VpcId": {
+"Ref": "VpcId"
+},
+"SecurityGroupEgress": [
+{
+"IpProtocol": "tcp",
+"FromPort": 443,
+"ToPort": 443,
+"CidrIp": "0.0.0.0/0",
+"Description": "HTTPS egress for ECR, Secrets Manager, CloudWatch Logs and pinned sandbox image pulls"
+}
+],
+"Tags": [
+{
+"Key": "Application",
+"Value": "ai-code-dojo"
+},
+{
+"Key": "Environment",
+"Value": {
+"Ref": "EnvironmentName"
+}
+},
+{
+"Key": "SecurityGroupPurpose",
+"Value": "python-runner-host"
+}
+]
+}
+},
+"RunnerHostFromAlbIngress": {
+"Type": "AWS::EC2::SecurityGroupIngress",
+"Properties": {
+"GroupId": {
+"Ref": "RunnerHostSecurityGroup"
+},
+"IpProtocol": "tcp",
+"FromPort": 8090,
+"ToPort": 8090,
+"SourceSecurityGroupId": {
+"Ref": "RunnerAlbSecurityGroup"
+},
+"Description": "Runner HTTP from the internal ALB only"
+}
+},
+"RunnerInstanceRole": {
+"Type": "AWS::IAM::Role",
+"Properties": {
+"Description": "Dedicated ECS container instance role for the staging Python Remote Runner host",
+"AssumeRolePolicyDocument": {
+"Version": "2012-10-17",
+"Statement": [
+{
+"Effect": "Allow",
+"Principal": {
+"Service": "ec2.amazonaws.com"
+},
+"Action": "sts:AssumeRole"
+}
+]
+},
+"ManagedPolicyArns": [
+{
+"Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role"
+},
+{
+"Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+],
+"Tags": [
+{
+"Key": "Application",
+"Value": "ai-code-dojo"
+},
+{
+"Key": "Environment",
+"Value": {
+"Ref": "EnvironmentName"
+}
+},
+{
+"Key": "RolePurpose",
+"Value": "python-runner-ecs-host"
+}
+]
+}
+},
+"RunnerInstanceProfile": {
+"Type": "AWS::IAM::InstanceProfile",
+"Properties": {
+"Roles": [
+{
+"Ref": "RunnerInstanceRole"
+}
+]
+}
+},
+"RunnerTaskExecutionRole": {
+"Type": "AWS::IAM::Role",
+"Properties": {
+"Description": "ECS task execution role for pulling the runner image, logging, and reading only the runner HMAC secret",
+"AssumeRolePolicyDocument": {
+"Version": "2012-10-17",
+"Statement": [
+{
+"Effect": "Allow",
+"Principal": {
+"Service": "ecs-tasks.amazonaws.com"
+},
+"Action": "sts:AssumeRole"
+}
+]
+},
+"ManagedPolicyArns": [
+{
+"Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+],
+"Policies": [
+{
+"PolicyName": "ReadPythonRunnerSharedSecret",
+"PolicyDocument": {
+"Version": "2012-10-17",
+"Statement": [
+{
+"Effect": "Allow",
+"Action": [
+"secretsmanager:GetSecretValue"
+],
+"Resource": {
+"Ref": "RunnerSharedSecret"
+}
+}
+]
+}
+}
+],
+"Tags": [
+{
+"Key": "Application",
+"Value": "ai-code-dojo"
+},
+{
+"Key": "Environment",
+"Value": {
+"Ref": "EnvironmentName"
+}
+},
+{
+"Key": "RolePurpose",
+"Value": "python-runner-task-execution"
+}
+]
+}
+},
+"RunnerCluster": {
+"Type": "AWS::ECS::Cluster",
+"Properties": {
+"ClusterName": {
+"Fn::Sub": "ai-code-dojo-${EnvironmentName}-python-runner"
+},
+"ClusterSettings": [
+{
+"Name": "containerInsights",
+"Value": "enabled"
+}
+],
+"Tags": [
+{
+"Key": "Application",
+"Value": "ai-code-dojo"
+},
+{
+"Key": "Environment",
+"Value": {
+"Ref": "EnvironmentName"
+}
+},
+{
+"Key": "ClusterPurpose",
+"Value": "python-runner-isolation"
+}
+]
+}
+},
+"RunnerLaunchTemplate": {
+"Type": "AWS::EC2::LaunchTemplate",
+"Properties": {
+"LaunchTemplateData": {
+"ImageId": {
+"Ref": "EcsOptimizedAmiId"
+},
+"InstanceType": {
+"Ref": "RunnerInstanceType"
+},
+"IamInstanceProfile": {
+"Arn": {
+"Fn::GetAtt": [
+"RunnerInstanceProfile",
+"Arn"
+]
+}
+},
+"MetadataOptions": {
+"HttpEndpoint": "enabled",
+"HttpTokens": "required",
+"HttpPutResponseHopLimit": 1,
+"InstanceMetadataTags": "disabled"
+},
+"Monitoring": {
+"Enabled": true
+},
+"NetworkInterfaces": [
+{
+"AssociatePublicIpAddress": false,
+"DeleteOnTermination": true,
+"DeviceIndex": 0,
+"Groups": [
+{
+"Ref": "RunnerHostSecurityGroup"
+}
+]
+}
+],
+"BlockDeviceMappings": [
+{
+"DeviceName": "/dev/xvda",
+"Ebs": {
+"DeleteOnTermination": true,
+"Encrypted": true,
+"VolumeSize": 20,
+"VolumeType": "gp3"
+}
+}
+],
+"UserData": {
+"Fn::Base64": {
+"Fn::Sub": "#!/bin/bash\nset -euxo pipefail\ncat <<'EOF' >> /etc/ecs/ecs.config\nECS_CLUSTER=${RunnerCluster}\nECS_ENABLE_CONTAINER_METADATA=true\nEOF\ninstall -d -m 0700 /var/lib/ai-code-dojo/python-runner-workspaces\n"
+}
+}
+},
+"TagSpecifications": [
+{
+"ResourceType": "launch-template",
+"Tags": [
+{
+"Key": "Application",
+"Value": "ai-code-dojo"
+},
+{
+"Key": "Environment",
+"Value": {
+"Ref": "EnvironmentName"
+}
+},
+{
+"Key": "LaunchTemplatePurpose",
+"Value": "python-runner-host"
+}
+]
+}
+]
+}
+},
+"RunnerAutoScalingGroup": {
+"Type": "AWS::AutoScaling::AutoScalingGroup",
+"Properties": {
+"VPCZoneIdentifier": {
+"Ref": "PrivateSubnetIds"
+},
+"LaunchTemplate": {
+"LaunchTemplateId": {
+"Ref": "RunnerLaunchTemplate"
+},
+"Version": {
+"Fn::GetAtt": [
+"RunnerLaunchTemplate",
+"LatestVersionNumber"
+]
+}
+},
+"MinSize": "1",
+"MaxSize": "1",
+"DesiredCapacity": "1",
+"HealthCheckType": "EC2",
+"HealthCheckGracePeriod": 300,
+"Tags": [
+{
+"Key": "Application",
+"Value": "ai-code-dojo",
+"PropagateAtLaunch": true
+},
+{
+"Key": "Environment",
+"Value": {
+"Ref": "EnvironmentName"
+},
+"PropagateAtLaunch": true
+},
+{
+"Key": "HostPurpose",
+"Value": "python-runner-dedicated",
+"PropagateAtLaunch": true
+}
+]
+}
+},
+"RunnerLogGroup": {
+"Type": "AWS::Logs::LogGroup",
+"DeletionPolicy": "Retain",
+"UpdateReplacePolicy": "Retain",
+"Properties": {
+"RetentionInDays": 7,
+"Tags": [
+{
+"Key": "Application",
+"Value": "ai-code-dojo"
+},
+{
+"Key": "Environment",
+"Value": {
+"Ref": "EnvironmentName"
+}
+},
+{
+"Key": "LogPurpose",
+"Value": "python-runner"
+}
+]
+}
+},
+"RunnerTaskDefinition": {
+"Type": "AWS::ECS::TaskDefinition",
+"Properties": {
+"Family": {
+"Fn::Sub": "ai-code-dojo-${EnvironmentName}-python-runner"
+},
+"RequiresCompatibilities": [
+"EC2"
+],
+"NetworkMode": "bridge",
+"ExecutionRoleArn": {
+"Fn::GetAtt": [
+"RunnerTaskExecutionRole",
+"Arn"
+]
+},
+"ContainerDefinitions": [
+{
+"Name": "python-runner",
+"Image": {
+"Ref": "RunnerServiceImageUri"
+},
+"Essential": true,
+"Cpu": 256,
+"Memory": 512,
+"ReadonlyRootFilesystem": true,
+"Privileged": false,
+"User": "0",
+"DockerSecurityOptions": [
+"no-new-privileges"
+],
+"LinuxParameters": {
+"Capabilities": {
+"Drop": [
+"ALL"
+]
+},
+"InitProcessEnabled": true
+},
+"Command": [
+"node",
+"apps/python-runner/src/server.mjs"
+],
+"WorkingDirectory": "/app",
+"PortMappings": [
+{
+"ContainerPort": 8090,
+"HostPort": 8090,
+"Protocol": "tcp"
+}
+],
+"MountPoints": [
+{
+"SourceVolume": "docker-socket",
+"ContainerPath": "/var/run/docker.sock",
+"ReadOnly": false
+},
+{
+"SourceVolume": "runner-workspaces",
+"ContainerPath": "/var/lib/ai-code-dojo/python-runner-workspaces",
+"ReadOnly": false
+}
+],
+"Environment": [
+{
+"Name": "NODE_ENV",
+"Value": "production"
+},
+{
+"Name": "TMPDIR",
+"Value": "/var/lib/ai-code-dojo/python-runner-workspaces"
+},
+{
+"Name": "PYTHON_RUNNER_PROBLEMS_ROOT",
+"Value": "/app/problems/examples"
+},
+{
+"Name": "PYTHON_RUNNER_PORT",
+"Value": "8090"
+},
+{
+"Name": "PYTHON_RUNNER_MAX_CONCURRENCY",
+"Value": "1"
+},
+{
+"Name": "PYTHON_RUNNER_MAX_QUEUED_JOBS",
+"Value": "2"
+},
+{
+"Name": "PYTHON_RUNNER_IDEMPOTENCY_TTL_MS",
+"Value": "600000"
+},
+{
+"Name": "PYTHON_RUNNER_MAX_CLOCK_SKEW_MS",
+"Value": "60000"
+},
+{
+"Name": "PYTHON_RUNNER_MAX_REQUEST_BYTES",
+"Value": "98304"
+}
+],
+"Secrets": [
+{
+"Name": "PYTHON_RUNNER_SHARED_SECRET",
+"ValueFrom": {
+"Ref": "RunnerSharedSecret"
+}
+}
+],
+"LogConfiguration": {
+"LogDriver": "awslogs",
+"Options": {
+"awslogs-group": {
+"Ref": "RunnerLogGroup"
+},
+"awslogs-region": {
+"Ref": "AWS::Region"
+},
+"awslogs-stream-prefix": "python-runner"
+}
+},
+"HealthCheck": {
+"Command": [
+"CMD",
+"node",
+"-e",
+"fetch('http://127.0.0.1:8090/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+],
+"Interval": 30,
+"Timeout": 5,
+"Retries": 3,
+"StartPeriod": 10
+}
+}
+],
+"Volumes": [
+{
+"Name": "docker-socket",
+"Host": {
+"SourcePath": "/var/run/docker.sock"
+}
+},
+{
+"Name": "runner-workspaces",
+"Host": {
+"SourcePath": "/var/lib/ai-code-dojo/python-runner-workspaces"
+}
+}
+],
+"Tags": [
+{
+"Key": "Application",
+"Value": "ai-code-dojo"
+},
+{
+"Key": "Environment",
+"Value": {
+"Ref": "EnvironmentName"
+}
+},
+{
+"Key": "TaskPurpose",
+"Value": "python-runner-control-plane"
+}
+]
+}
+},
+"RunnerLoadBalancer": {
+"Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+"Properties": {
+"Type": "application",
+"Scheme": "internal",
+"IpAddressType": "ipv4",
+"Subnets": {
+"Ref": "PrivateSubnetIds"
+},
+"SecurityGroups": [
+{
+"Ref": "RunnerAlbSecurityGroup"
+}
+],
+"LoadBalancerAttributes": [
+{
+"Key": "routing.http.drop_invalid_header_fields.enabled",
+"Value": "true"
+},
+{
+"Key": "idle_timeout.timeout_seconds",
+"Value": "15"
+}
+],
+"Tags": [
+{
+"Key": "Application",
+"Value": "ai-code-dojo"
+},
+{
+"Key": "Environment",
+"Value": {
+"Ref": "EnvironmentName"
+}
+},
+{
+"Key": "LoadBalancerPurpose",
+"Value": "python-runner-internal"
+}
+]
+}
+},
+"RunnerTargetGroup": {
+"Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+"Properties": {
+"VpcId": {
+"Ref": "VpcId"
+},
+"Protocol": "HTTP",
+"Port": 8090,
+"TargetType": "instance",
+"HealthCheckEnabled": true,
+"HealthCheckProtocol": "HTTP",
+"HealthCheckPort": "traffic-port",
+"HealthCheckPath": "/health",
+"HealthCheckIntervalSeconds": 30,
+"HealthCheckTimeoutSeconds": 5,
+"HealthyThresholdCount": 2,
+"UnhealthyThresholdCount": 2,
+"Matcher": {
+"HttpCode": "200"
+},
+"TargetGroupAttributes": [
+{
+"Key": "deregistration_delay.timeout_seconds",
+"Value": "10"
+}
+],
+"Tags": [
+{
+"Key": "Application",
+"Value": "ai-code-dojo"
+},
+{
+"Key": "Environment",
+"Value": {
+"Ref": "EnvironmentName"
+}
+},
+{
+"Key": "TargetPurpose",
+"Value": "python-runner-http"
+}
+]
+}
+},
+"RunnerHttpsListener": {
+"Type": "AWS::ElasticLoadBalancingV2::Listener",
+"Properties": {
+"LoadBalancerArn": {
+"Ref": "RunnerLoadBalancer"
+},
+"Port": 443,
+"Protocol": "HTTPS",
+"SslPolicy": "ELBSecurityPolicy-TLS13-1-2-2021-06",
+"Certificates": [
+{
+"CertificateArn": {
+"Ref": "CertificateArn"
+}
+}
+],
+"DefaultActions": [
+{
+"Type": "forward",
+"TargetGroupArn": {
+"Ref": "RunnerTargetGroup"
+}
+}
+]
+}
+},
+"RunnerDnsRecord": {
+"Type": "AWS::Route53::RecordSet",
+"Properties": {
+"HostedZoneId": {
+"Ref": "PrivateHostedZoneId"
+},
+"Name": {
+"Ref": "RunnerDnsName"
+},
+"Type": "A",
+"AliasTarget": {
+"DNSName": {
+"Fn::GetAtt": [
+"RunnerLoadBalancer",
+"DNSName"
+]
+},
+"HostedZoneId": {
+"Fn::GetAtt": [
+"RunnerLoadBalancer",
+"CanonicalHostedZoneID"
+]
+},
+"EvaluateTargetHealth": true
+}
+}
+},
+"RunnerService": {
+"Type": "AWS::ECS::Service",
+"DependsOn": [
+"RunnerHttpsListener",
+"RunnerHostFromAlbIngress",
+"RunnerAlbToHostEgress"
+],
+"Properties": {
+"ServiceName": {
+"Fn::Sub": "ai-code-dojo-${EnvironmentName}-python-runner"
+},
+"Cluster": {
+"Ref": "RunnerCluster"
+},
+"TaskDefinition": {
+"Ref": "RunnerTaskDefinition"
+},
+"DesiredCount": 1,
+"LaunchType": "EC2",
+"SchedulingStrategy": "REPLICA",
+"DeploymentController": {
+"Type": "ECS"
+},
+"DeploymentConfiguration": {
+"MaximumPercent": 100,
+"MinimumHealthyPercent": 0,
+"DeploymentCircuitBreaker": {
+"Enable": true,
+"Rollback": true
+}
+},
+"HealthCheckGracePeriodSeconds": 30,
+"LoadBalancers": [
+{
+"ContainerName": "python-runner",
+"ContainerPort": 8090,
+"TargetGroupArn": {
+"Ref": "RunnerTargetGroup"
+}
+}
+],
+"EnableECSManagedTags": true,
+"PropagateTags": "SERVICE",
+"Tags": [
+{
+"Key": "Application",
+"Value": "ai-code-dojo"
+},
+{
+"Key": "Environment",
+"Value": {
+"Ref": "EnvironmentName"
+}
+},
+{
+"Key": "ServicePurpose",
+"Value": "python-runner-private"
+}
+]
+}
+},
+"RunnerClientSecurityGroup": {
+"Type": "AWS::EC2::SecurityGroup",
+"Properties": {
+"GroupDescription": "Attach to staging Worker tasks that are allowed to call the Python Remote Runner",
+"VpcId": {
+"Ref": "VpcId"
+},
+"SecurityGroupEgress": [
+{
+"IpProtocol": "-1",
+"CidrIp": "127.0.0.1/32",
+"Description": "Suppress default allow-all egress; intended egress is defined by standalone rules"
+}
+],
+"Tags": [
+{
+"Key": "Application",
+"Value": "ai-code-dojo"
+},
+{
+"Key": "Environment",
+"Value": {
+"Ref": "EnvironmentName"
+}
+},
+{
+"Key": "SecurityGroupPurpose",
+"Value": "python-runner-client"
+}
+]
+}
+},
+"RunnerAlbFromClientIngress": {
+"Type": "AWS::EC2::SecurityGroupIngress",
+"Properties": {
+"GroupId": {
+"Ref": "RunnerAlbSecurityGroup"
+},
+"IpProtocol": "tcp",
+"FromPort": 443,
+"ToPort": 443,
+"SourceSecurityGroupId": {
+"Ref": "RunnerClientSecurityGroup"
+},
+"Description": "HTTPS from the dedicated staging Worker runner-client security group only"
+}
+},
+"RunnerClientToAlbEgress": {
+"Type": "AWS::EC2::SecurityGroupEgress",
+"Properties": {
+"GroupId": {
+"Ref": "RunnerClientSecurityGroup"
+},
+"IpProtocol": "tcp",
+"FromPort": 443,
+"ToPort": 443,
+"DestinationSecurityGroupId": {
+"Ref": "RunnerAlbSecurityGroup"
+},
+"Description": "HTTPS to the internal Python Remote Runner ALB only"
+}
+},
+"RunnerAlbToHostEgress": {
+"Type": "AWS::EC2::SecurityGroupEgress",
+"Properties": {
+"GroupId": {
+"Ref": "RunnerAlbSecurityGroup"
+},
+"IpProtocol": "tcp",
+"FromPort": 8090,
+"ToPort": 8090,
+"DestinationSecurityGroupId": {
+"Ref": "RunnerHostSecurityGroup"
+},
+"Description": "Forward runner traffic to the dedicated host only"
+}
+}
+},
+"Outputs": {
+"RunnerUrl": {
+"Description": "Set as PYTHON_REMOTE_RUNNER_URL in the staging Worker.",
+"Value": {
+"Fn::Sub": "https://${RunnerDnsName}"
+}
+},
+"RunnerSharedSecretArn": {
+"Description": "Inject this secret value as PYTHON_REMOTE_RUNNER_SHARED_SECRET in the Worker. Never expose the secret value in CloudFormation output.",
+"Value": {
+"Ref": "RunnerSharedSecret"
+}
+},
+"RunnerClusterName": {
+"Value": {
+"Ref": "RunnerCluster"
+}
+},
+"RunnerServiceName": {
+"Value": {
+"Ref": "RunnerService"
+}
+},
+"RunnerAutoScalingGroupName": {
+"Value": {
+"Ref": "RunnerAutoScalingGroup"
+}
+},
+"RunnerAlbSecurityGroupId": {
+"Value": {
+"Ref": "RunnerAlbSecurityGroup"
+}
+},
+"RunnerHostSecurityGroupId": {
+"Value": {
+"Ref": "RunnerHostSecurityGroup"
+}
+},
+"RunnerClientSecurityGroupId": {
+"Description": "Attach this security group to the staging Worker workload before setting PYTHON_REMOTE_RUNNER_URL.",
+"Value": {
+"Ref": "RunnerClientSecurityGroup"
+}
+}
+}
+}
