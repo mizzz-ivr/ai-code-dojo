@@ -7,8 +7,10 @@ on:
       - 'packages/runner-sdk/**'
       - 'problems/examples/**'
       - 'scripts/package-python-runner-problems.mjs'
+      - 'scripts/python-runner-trivy-exception-validator.mjs'
       - 'tests/integration/python-runner-service-image.test.mjs'
       - 'tests/unit/python-runner-image-packager.test.mjs'
+      - 'tests/unit/python-runner-trivy-exception-validator.test.mjs'
       - '.github/workflows/python-runner-image-quality.yml'
       - '.trivyignore.yaml'
   workflow_dispatch:
@@ -36,6 +38,9 @@ jobs:
 
       - name: problem runtime packager unit test
         run: node --test tests/unit/python-runner-image-packager.test.mjs
+
+      - name: Trivy例外contract unit test
+        run: node --test tests/unit/python-runner-trivy-exception-validator.test.mjs
 
       - name: Runner service image build
         run: >-
