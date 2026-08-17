@@ -10,6 +10,7 @@ on:
       - 'tests/integration/python-runner-service-image.test.mjs'
       - 'tests/unit/python-runner-image-packager.test.mjs'
       - '.github/workflows/python-runner-image-quality.yml'
+      - '.trivyignore.yaml'
   workflow_dispatch:
 
 permissions:
@@ -128,15 +129,16 @@ jobs:
           path: python-runner-trivy.json
           retention-days: 14
 
-      - name: fixed CRITICAL vulnerabilityを拒否
+      - name: HIGH / CRITICAL vulnerabilityを期限付き例外以外拒否
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.PYTHON_RUNNER_SERVICE_IMAGE }}
           format: table
           exit-code: '1'
-          ignore-unfixed: true
+          ignore-unfixed: false
           vuln-type: 'os,library'
-          severity: 'CRITICAL'
+          severity: 'HIGH,CRITICAL'
+          trivyignores: '.trivyignore.yaml'
           skip-setup-trivy: true
 
       - name: failure時Runner logを表示
