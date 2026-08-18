@@ -4,11 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       confirm_publish:
-        description: staging ECRへimmutable Python Runner imageをpublishする明示確認
+        description: PUBLISH_STAGING_PYTHON_RUNNER_IMAGE と入力してstaging ECR publishを明示確認
         required: true
-        type: choice
-        options:
-          - PUBLISH_STAGING_PYTHON_RUNNER_IMAGE
+        type: string
 
 permissions:
   contents: read
@@ -77,6 +75,7 @@ jobs:
         run: |
           set -euo pipefail
           node --test tests/unit/python-runner-image-release-validator.test.mjs
+          node --test tests/unit/python-runner-ecr-lifecycle-policy-validator.test.mjs
           node --test tests/unit/python-runner-trivy-exception-validator.test.mjs
 
       - name: Configure AWS credentials with GitHub OIDC
@@ -85,6 +84,7 @@ jobs:
           role-to-assume: ${{ env.ECR_PUBLISH_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: ai-code-dojo-image-${{ github.run_id }}
+          role-duration-seconds: 900
           mask-aws-account-id: true
           allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
 
@@ -114,12 +114,13 @@ jobs:
             echo "::error::ECR repository encryption must remain AES256."
             exit 1
           fi
-          lifecycle_policy="$(aws ecr get-lifecycle-policy --repository-name "${ECR_REPOSITORY_NAME}" --query lifecyclePolicyText --output text)"
-          expected_policy='{"rules":[{"rulePriority":1,"description":"Expire untagged staging images after 7 days","selection":{"tagStatus":"untagged","countType":"sinceImagePushed","countUnit":"days","countNumber":7},"action":{"type":"expire"}}]}'
-          if [[ "${lifecycle_policy}" != "${expected_policy}" ]]; then
-            echo "::error::ECR lifecycle policy drift detected."
-            exit 1
-          fi
+          lifecycle_policy="$(
+            aws ecr get-lifecycle-policy \
+              --repository-name "${ECR_REPOSITORY_NAME}" \
+              --query lifecyclePolicyText \
+              --output text
+          )"
+          printf '%s' "${lifecycle_policy}" | node scripts/validate-python-runner-ecr-lifecycle-policy.mjs
 
       - name: Reject an existing immutable source tag
         shell: bash
@@ -274,3 +275,10 @@ jobs:
             echo "- Staging deploy: **未実施**"
             echo "- Python Public gate: **OFF**"
           } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Cleanup Docker registry credentials
+        if: always()
+        shell: bash
+        run: |
+          registry_host="${ECR_REPOSITORY_URI%%/*}"
+          docker logout "${registry_host}" >/dev/null 2>&1 || true
