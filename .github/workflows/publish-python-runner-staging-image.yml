@@ -1,0 +1,276 @@
+name: publish-python-runner-staging-image
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_publish:
+        description: staging ECRへimmutable Python Runner imageをpublishする明示確認
+        required: true
+        type: choice
+        options:
+          - PUBLISH_STAGING_PYTHON_RUNNER_IMAGE
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ai-code-dojo-staging-python-runner-image-publish
+  cancel-in-progress: false
+
+env:
+  ECR_REPOSITORY_NAME: ai-code-dojo-staging-python-runner
+  LOCAL_IMAGE: local/ai-code-dojo-python-runner:${{ github.sha }}
+  IMAGE_TAG: sha-${{ github.sha }}
+
+jobs:
+  publish-image:
+    if: github.ref == 'refs/heads/main' && inputs.confirm_publish == 'PUBLISH_STAGING_PYTHON_RUNNER_IMAGE'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: staging-python-runner-image
+    env:
+      AWS_REGION: ${{ vars.AWS_STAGING_REGION }}
+      AWS_ACCOUNT_ID: ${{ vars.AWS_STAGING_ACCOUNT_ID }}
+      ECR_PUBLISH_ROLE_ARN: ${{ vars.AWS_STAGING_PYTHON_RUNNER_ECR_PUBLISH_ROLE_ARN }}
+      ECR_REPOSITORY_URI: ${{ vars.AWS_STAGING_PYTHON_RUNNER_ECR_URI }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate non-secret publish variables
+        shell: bash
+        run: |
+          set -euo pipefail
+          for value in "${AWS_REGION}" "${AWS_ACCOUNT_ID}" "${ECR_PUBLISH_ROLE_ARN}" "${ECR_REPOSITORY_URI}"; do
+            if [[ -z "${value}" ]]; then
+              echo "::error::staging-python-runner-image GitHub Environment variables are incomplete."
+              exit 1
+            fi
+          done
+          if [[ ! "${AWS_REGION}" =~ ^[a-z0-9-]+$ ]]; then
+            echo "::error::AWS_STAGING_REGION has an invalid format."
+            exit 1
+          fi
+          if [[ ! "${AWS_ACCOUNT_ID}" =~ ^[0-9]{12}$ ]]; then
+            echo "::error::AWS_STAGING_ACCOUNT_ID has an invalid format."
+            exit 1
+          fi
+          expected_uri="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY_NAME}"
+          if [[ "${ECR_REPOSITORY_URI}" != "${expected_uri}" ]]; then
+            echo "::error::AWS_STAGING_PYTHON_RUNNER_ECR_URI does not match the approved staging repository."
+            exit 1
+          fi
+          if [[ ! "${ECR_PUBLISH_ROLE_ARN}" =~ ^arn:aws[a-zA-Z-]*:iam::${AWS_ACCOUNT_ID}:role/.+$ ]]; then
+            echo "::error::AWS_STAGING_PYTHON_RUNNER_ECR_PUBLISH_ROLE_ARN has an invalid format."
+            exit 1
+          fi
+          echo "::add-mask::${AWS_ACCOUNT_ID}"
+          echo "::add-mask::${ECR_REPOSITORY_URI}"
+          echo "::add-mask::${ECR_PUBLISH_ROLE_ARN}"
+
+      - name: Validate release and Trivy contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test tests/unit/python-runner-image-release-validator.test.mjs
+          node --test tests/unit/python-runner-trivy-exception-validator.test.mjs
+
+      - name: Configure AWS credentials with GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ env.ECR_PUBLISH_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: ai-code-dojo-image-${{ github.run_id }}
+          mask-aws-account-id: true
+          allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
+
+      - name: Verify immutable ECR repository contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r repository_uri tag_mutability scan_on_push encryption_type <<< "$(
+            aws ecr describe-repositories \
+              --repository-names "${ECR_REPOSITORY_NAME}" \
+              --query 'repositories[0].[repositoryUri,imageTagMutability,imageScanningConfiguration.scanOnPush,encryptionConfiguration.encryptionType]' \
+              --output text
+          )"
+          if [[ "${repository_uri}" != "${ECR_REPOSITORY_URI}" ]]; then
+            echo "::error::ECR repository URI drift detected."
+            exit 1
+          fi
+          if [[ "${tag_mutability}" != "IMMUTABLE" ]]; then
+            echo "::error::ECR repository must remain IMMUTABLE."
+            exit 1
+          fi
+          if [[ "${scan_on_push}" != "True" ]]; then
+            echo "::error::ECR repository scan-on-push must remain enabled."
+            exit 1
+          fi
+          if [[ "${encryption_type}" != "AES256" ]]; then
+            echo "::error::ECR repository encryption must remain AES256."
+            exit 1
+          fi
+          lifecycle_policy="$(aws ecr get-lifecycle-policy --repository-name "${ECR_REPOSITORY_NAME}" --query lifecyclePolicyText --output text)"
+          expected_policy='{"rules":[{"rulePriority":1,"description":"Expire untagged staging images after 7 days","selection":{"tagStatus":"untagged","countType":"sinceImagePushed","countUnit":"days","countNumber":7},"action":{"type":"expire"}}]}'
+          if [[ "${lifecycle_policy}" != "${expected_policy}" ]]; then
+            echo "::error::ECR lifecycle policy drift detected."
+            exit 1
+          fi
+
+      - name: Reject an existing immutable source tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          existing_count="$(
+            aws ecr list-images \
+              --repository-name "${ECR_REPOSITORY_NAME}" \
+              --filter tagStatus=TAGGED \
+              --query "length(imageIds[?imageTag=='${IMAGE_TAG}'])" \
+              --output text
+          )"
+          if [[ "${existing_count}" != "0" ]]; then
+            echo "::error::The source commit tag already exists. Immutable releases are never overwritten."
+            exit 1
+          fi
+
+      - name: Build Python Runner service image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build \
+            --file apps/python-runner/Dockerfile \
+            --tag "${LOCAL_IMAGE}" \
+            .
+
+      - name: Verify runtime image content
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint sh "${LOCAL_IMAGE}" -ec '
+            node --version | grep -Fx "v22.23.1"
+            docker --version | grep -F "Docker version 29.6.2"
+            ! command -v npm
+            ! command -v yarn
+            test ! -e /app/.git
+            test ! -e /app/docs
+            test -f /app/problems/examples/python-bugfix-score-buckets/problem.json
+            test -f /app/problems/examples/python-bugfix-score-buckets/tests/visible/score_visible_cases.json
+            test -f /app/problems/examples/python-bugfix-score-buckets/tests/hidden/score_hidden_cases.json
+            test ! -e /app/problems/examples/python-bugfix-score-buckets/tests/hidden/score_hidden_test.py
+            test ! -e /app/problems/examples/python-bugfix-score-buckets/starter/score.py
+            test -z "$(find /app/problems/examples -type f ! -name problem.json ! -name "*.json" -print -quit)"
+          '
+
+      - name: Generate pre-publish SBOM
+        uses: anchore/sbom-action@v0.24.0
+        with:
+          image: ${{ env.LOCAL_IMAGE }}
+          format: cyclonedx-json
+          output-file: python-runner-sbom.cdx.json
+          artifact-name: python-runner-staging-publish-sbom-${{ github.sha }}
+          upload-artifact: true
+          upload-release-assets: false
+
+      - name: Generate raw pre-publish Trivy report
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.LOCAL_IMAGE }}
+          format: json
+          output: python-runner-trivy.json
+          exit-code: '0'
+          vuln-type: 'os,library'
+
+      - name: Upload raw pre-publish Trivy report
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-runner-staging-publish-trivy-${{ github.sha }}
+          path: python-runner-trivy.json
+          retention-days: 90
+
+      - name: Reject HIGH / CRITICAL vulnerabilities outside approved exceptions
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.LOCAL_IMAGE }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: false
+          vuln-type: 'os,library'
+          severity: 'HIGH,CRITICAL'
+          trivyignores: '.trivyignore.yaml'
+          skip-setup-trivy: true
+
+      - name: Authenticate Docker to ECR
+        shell: bash
+        run: |
+          set -euo pipefail
+          registry_host="${ECR_REPOSITORY_URI%%/*}"
+          aws ecr get-login-password --region "${AWS_REGION}" |
+            docker login --username AWS --password-stdin "${registry_host}"
+
+      - name: Push immutable source-commit tag
+        shell: bash
+        env:
+          PUBLISH_IMAGE: ${{ env.ECR_REPOSITORY_URI }}:${{ env.IMAGE_TAG }}
+        run: |
+          set -euo pipefail
+          docker tag "${LOCAL_IMAGE}" "${PUBLISH_IMAGE}"
+          docker push "${PUBLISH_IMAGE}"
+
+      - name: Resolve registry digest
+        id: digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_digest="$(
+            aws ecr describe-images \
+              --repository-name "${ECR_REPOSITORY_NAME}" \
+              --image-ids imageTag="${IMAGE_TAG}" \
+              --query 'imageDetails[0].imageDigest' \
+              --output text
+          )"
+          if [[ ! "${image_digest}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::ECR returned an invalid image digest."
+            exit 1
+          fi
+          echo "image_digest=${image_digest}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create immutable release manifest
+        shell: bash
+        env:
+          PYTHON_RUNNER_ECR_URI: ${{ env.ECR_REPOSITORY_URI }}
+          PYTHON_RUNNER_IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          PYTHON_RUNNER_IMAGE_DIGEST: ${{ steps.digest.outputs.image_digest }}
+        run: |
+          set -euo pipefail
+          node scripts/create-python-runner-image-release-manifest.mjs > python-runner-image-release.json
+          sha256sum python-runner-image-release.json > python-runner-image-release.json.sha256
+
+      - name: Upload immutable release manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-runner-image-release-${{ github.sha }}
+          path: |
+            python-runner-image-release.json
+            python-runner-image-release.json.sha256
+          retention-days: 90
+
+      - name: Write publish summary
+        shell: bash
+        env:
+          IMAGE_DIGEST: ${{ steps.digest.outputs.image_digest }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Python Runner staging image publish"
+            echo
+            echo "- Source commit: \`${GITHUB_SHA}\`"
+            echo "- Immutable tag: \`${IMAGE_TAG}\`"
+            echo "- Registry digest: \`${IMAGE_DIGEST}\`"
+            echo "- Release manifest artifact: \`python-runner-image-release-${GITHUB_SHA}\`"
+            echo "- Staging deploy: **未実施**"
+            echo "- Python Public gate: **OFF**"
+          } >> "${GITHUB_STEP_SUMMARY}"
