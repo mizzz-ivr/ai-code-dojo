@@ -84,6 +84,17 @@ test('workflow validatorはmain・dedicated environment・explicit confirmation�
   assert.equal(includesError(errors, 'restrict the assumed AWS account'), true);
 });
 
+test('publish workflowは確認フレーズ手入力・15分OIDC session・semantic lifecycle検証を固定する', async () => {
+  const workflow = await loadWorkflow();
+  assert.equal(workflow.includes('type: string'), true);
+  assert.equal(workflow.includes('options:\n          - PUBLISH_STAGING_PYTHON_RUNNER_IMAGE'), false);
+  assert.equal(workflow.includes('role-duration-seconds: 900'), true);
+  assert.equal(
+    workflow.includes("printf '%s' \"${lifecycle_policy}\" | node scripts/validate-python-runner-ecr-lifecycle-policy.mjs"),
+    true
+  );
+});
+
 test('release manifestはsource commit tagとregistry digestを一意に結び付ける', () => {
   assert.deepEqual(validatePythonRunnerImageReleaseManifest(validManifest()), []);
 });
