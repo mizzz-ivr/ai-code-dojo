@@ -1,6 +1,6 @@
 # current-status（正本）
 
-最終更新: 2026-08-14（Issue #147 Python Runner staging review-only IaC）
+最終更新: 2026-08-17（Issue #149 / PR #150 Python Runner service image）
 
 ## この文書の目的
 
@@ -10,13 +10,15 @@
 
 - Repository: `mizzz-ivr/ai-code-dojo`。
 - AI生成コードのバグ修正・機能追加を実務フローで学ぶ練習プラットフォームとしてMVP開発中。
-- PR #142はmerge済み。公開Challenge検索・絞り込み、JS/TS実践問題4件、TypeScript実採点を反映済み。
-- PR #144は2026-08-13にmerge済み。SQL / HTML-CSS Runner、Python isolated-preview、公開Challenge 9件をmainへ反映済み。
-- PR #146は2026-08-14にmerge済み。Python Remote Runner境界、hidden test filesystem isolation、user-code failureのterminal grading分類をmainへ反映済み。
-- Parent Issue #145はOpenのまま。Actual staging isolation / adversarial test / cost gate / Python公開判定が残る。
-- Issue #147でPython Remote Runnerのreview-only AWS/staging IaCを実装中。
+- PR #142 merge済み。公開Challenge検索・絞り込み、JS/TS実践問題、TypeScript実採点を反映済み。
+- PR #144 merge済み。SQL / HTML-CSS Runner、Python isolated-preview、公開Challenge 9件を反映済み。
+- PR #146 merge済み。Python Remote Runner、hidden test filesystem isolation、HMAC、idempotency、resource hardeningを反映済み。
+- PR #148は2026-08-17にmerge済み。Python Remote Runnerのreview-only staging AWS IaCをmainへ反映済み。
+- Issue #147はPR #148 mergeで完了済み。
+- Issue #149 / PR #150でPython Runner service imageの再現可能build・実Docker E2E・SBOM・脆弱性gateを実装中。
+- Parent Issue #145はOpenのまま。Actual staging deploy / adversarial test / cost gate / Python公開判定が残る。
 - Pythonは引き続きPublic APIでfail-closed拒否する。Actual staging検証完了までは公開allowlistへ追加しない。
-- Linearは無料Issue上限のため、Issue #147はGitHub Issue / Repository docs / Notionを管理正本とする。
+- Linearは無料Issue上限のため、Issue #149はGitHub Issue / Repository docs / Notionを管理正本とする。
 
 ## 現行runtime
 
@@ -26,7 +28,7 @@
 - Admin Challenge Repository: DB-backed / async DatabaseClient。
 - Submission / lease / outbox Repository: 同期SQLite固有APIを継続。
 - PostgreSQL 18.4 migration / integration基盤は利用可能だが、本番DB切替は未実施。
-- RDS / ECS / Secrets ManagerのActual AWS resourceは未作成・未変更。
+- RDS / ECS / ECR / Secrets ManagerのActual AWS resourceは、このPython Runner staging作業では作成・変更していない。
 
 ## Public Challenge / Runner
 
@@ -47,53 +49,70 @@ Python Challenge `python-bugfix-score-buckets`はcontentとして存在するが
 - `apps/python-runner`専用service。
 - WorkerからPython Docker実行を削除し、HMAC署名付きHTTP clientへ分離。
 - Production Remote URLはHTTPS必須。
-- HMAC契約を`packages/runner-sdk`へ共通化。
 - request / response size、timeout、concurrency、queue、idempotencyを有限化。
-- fixed Python image digest、network none、read-only、non-root、cap-drop、no-new-privileges、resource limitを維持。
+- fixed Python sandbox image、network none、read-only、non-root、cap-drop、no-new-privileges、resource limitを維持。
 - Python sandboxへ`submission.py`と汎用`invoke.py`だけをmountし、hidden case / expected valueをtrusted Node processへ隔離。
 - SyntaxError / runtime failure / timeout / protocol failureはterminal 0点とし、user-code由来の不要なinfra retryを防止。
-- Docker起動不可など実行基盤failureだけをinfra retry対象とする。
 
 merge commit: `914f546039c8a4bdf731be0f230e9993e0dbed12`
 
-## Issue #147 Python Runner staging review-only IaC
+## PR #148 staging review-only IaC（完了済み）
 
-### 実装対象
+- dedicated ECS/EC2 Runner host。
+- ASG Min/Max/Desired=1。
+- ECS service DesiredCount=1。
+- internal ALB + HTTPS 443。
+- private Route53 alias。
+- Secrets Manager generated HMAC secret。
+- Runner Client / ALB / Host専用Security Group。
+- Docker socket / shared workspace host bind mount。
+- IMDSv2 required、public IP / SSHなし、encrypted gp3。
+- Repository validatorでFargate化、public ingress、capacity拡大、plaintext secret、IAM拡大等をfail-closed拒否。
+- Actual AWS resourceは作成していない。
 
-- `infra/aws/cloudformation/python-runner-staging-stack.json`
-- dedicated ECS/EC2 Runner host
-- Auto Scaling group Min/Max/Desired=1
-- ECS service DesiredCount=1
-- internal ALB + HTTPS 443
-- private Route53 alias
-- Secrets Manager generated HMAC secret
-- Runner Client / ALB / Host専用Security Group
-- Runner task execution role
-- CloudWatch Logs
-- Docker socket / shared workspace host bind mount
-- Repository独自CloudFormation validator + unit test
-- architecture / runbook / handoff
+merge commit: `8f6b4c9b5ffb535928b59acc927b507fd1e56462`
 
-### Fargateを使わない理由
+## Issue #149 / PR #150 Python Runner service image
 
-現行Remote Runnerはhost Docker daemonと`host.sourcePath` bind mountを必要とするため、Fargateへ単純配置するとruntime contractを満たさない。Issue #147では専用ECS/EC2 hostに限定し、Docker socket root-equivalent権限をWorkerや他workloadへ拡散させない。
+### 実装済み
 
-### Review-only gate
+- `apps/python-runner/Dockerfile`を追加。
+- Node.js `22.23.1-alpine3.24`をdigest固定。
+- Docker CLI `29.6.2-cli-alpine3.24`をdigest固定。
+- runtimeからnpm / npx / yarnを除去。
+- service imageへ`apps/python-runner`、`packages/runner-sdk`、Python採点に必要なtrusted runtime dataだけを配置。
+- Python Challenge runtime packagerを追加し、`problem.json`、visible case JSON、hidden case JSONだけをimageへ含める。
+- starter code、旧hidden `.py` test source、他言語Challenge、Repository docs / git metadataをruntime imageへ含めない。
+- case path traversalとsymlinkをfail-closed拒否するunit testを追加。
+- CIでservice containerをread-only / cap-drop ALL / no-new-privilegesとして起動。
+- containerized Runner → host Docker socket → pinned Python sandbox → reference submission 100点のE2Eを追加。
+- CycloneDX SBOMとTrivy JSON reportをworkflow artifactとして生成。
+- HIGH / CRITICAL vulnerabilityを原則CI failureにする。
 
-- CI / Repository操作からAWS resourceを作成しない。
-- Actual AWS changeはchange setレビューとユーザーの明示承認後だけ。
-- Python Public gateはOFFのまま。
-- staging WorkerへのRunner Client SG / URL / secret wiringはActual deploy段階の別作業。
+### Trivy例外
+
+初回scanではCRITICAL 0件、HIGH 8件を検出した。8件はすべてDocker CLI binary内のGo stdlib `1.26.5`由来。
+
+現時点で利用可能なstable Docker CLI / Go upstreamでは解消版へ更新できないため、次の条件をすべて固定した期限付き例外だけを許可する。
+
+- CVE ID: 承認済み8件のみ。
+- path: `usr/local/bin/docker`のみ。
+- PURL: `pkg:golang/stdlib@v1.26.5`のみ。
+- expiry: `2026-09-17`。
+- unknown CVE追加、PURL wildcard化、期限延長はvalidator / unit testで拒否する。
+
+raw Trivy reportは例外適用前の情報をartifactとして残し、レビュー可能にする。
 
 ## Issue #145でまだ未完了の事項
 
-- Issue #147 review-only IaCのmerge。
+- PR #150 merge。
+- ECR repository / image publish / digest release contractのreview-only設計。
 - AWS `validate-template` / change set review。
 - ユーザー明示承認後のActual staging deploy。
 - WorkerへのRunner Client SG / private URL / shared secret wiring。
-- stagingでのadversarial code検証。
+- staging adversarial code検証。
 - 実インフラ上のconcurrency / quota / cost上限確認。
-- secret rotation手順。
+- secret rotation / rollback手順確認。
 - 複数Remote Runner instanceを跨ぐ重複実行の運用評価。
 - 上記完了後のPython Public allowlist有効化判断。
 
@@ -103,10 +122,11 @@ Actual AWS変更は明示承認なしに実施しない。
 
 - API processでsubmission codeを直接実行しない。
 - WorkerへDocker socketを公開しない。
-- Docker socketを使用する場合は専用Runner host境界だけに限定する。
-- Problem JSON由来の任意commandをshell実行しない。
+- Docker socket root-equivalent権限は専用Runner host / control-planeだけに限定する。
+- submitted Python codeはnon-root sandboxで実行する。
 - Hidden test source / hidden logsをlearnerへ返さない。
-- Unsupported languageをsubmission / outbox永続化前にfail-closed拒否する。
+- service image内のhidden case JSONはtrusted Runner用であり、Python sandbox filesystemへmountしない。
+- Problem JSON由来の任意commandをshell実行しない。
 - Submission + queue outbox atomicityを変更しない。
 - Processing lease / attempt fencing / completion guardを変更しない。
 - ユーザーコード起因failureをinfra retryへ誤分類しない。
@@ -115,19 +135,20 @@ Actual AWS変更は明示承認なしに実施しない。
 
 ## 次の候補
 
+Runner staging gate:
+
+1. PR #150 merge。
+2. ECR image publish / digest release contractをreview-onlyで実装。
+3. review-only AWS change set確認。
+4. 明示承認後のstaging deploy / adversarial test。
+5. Python Public gate判定。
+
 ユーザー価値:
 
-1. Python Challenge追加（公開gateは維持したままcontentを増やす）。
+1. Python Challenge追加。
 2. Challenge tag検索 / 学習トラック。
 3. おすすめChallenge / 次に解く問題。
 4. 進捗ページの実submissionデータ化。
-
-Issue #145 gate:
-
-1. Issue #147 merge。
-2. review-only change set確認。
-3. 明示承認後のstaging deploy / adversarial test。
-4. Python Public gate判定。
 
 基盤依存:
 
@@ -142,8 +163,9 @@ Issue #145 gate:
 ## 参照先
 
 - Parent Issue #145: `https://github.com/mizzz-ivr/ai-code-dojo/issues/145`
-- Issue #147: `https://github.com/mizzz-ivr/ai-code-dojo/issues/147`
-- PR #146: `https://github.com/mizzz-ivr/ai-code-dojo/pull/146`
+- Issue #149: `https://github.com/mizzz-ivr/ai-code-dojo/issues/149`
+- PR #150: `https://github.com/mizzz-ivr/ai-code-dojo/pull/150`
 - Python Remote Runner設計: `docs/architecture/python-remote-runner.md`
 - Python Runner staging AWS設計: `docs/architecture/python-runner-staging-aws.md`
-- Python Runner staging runbook: `docs/runbooks/2026-08-14-python-runner-staging-iac.md`
+- Python Runner service image設計: `docs/architecture/python-runner-service-image.md`
+- Python Runner service image runbook: `docs/runbooks/2026-08-17-python-runner-service-image.md`

@@ -1,0 +1,159 @@
+name: python-runner-image-quality
+
+on:
+  pull_request:
+    paths:
+      - 'apps/python-runner/**'
+      - 'packages/runner-sdk/**'
+      - 'problems/examples/**'
+      - 'scripts/package-python-runner-problems.mjs'
+      - 'scripts/python-runner-trivy-exception-validator.mjs'
+      - 'tests/integration/python-runner-service-image.test.mjs'
+      - 'tests/unit/python-runner-image-packager.test.mjs'
+      - 'tests/unit/python-runner-trivy-exception-validator.test.mjs'
+      - '.github/workflows/python-runner-image-quality.yml'
+      - '.trivyignore.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_RUNNER_SERVICE_IMAGE: local/ai-code-dojo-python-runner:${{ github.sha }}
+  PYTHON_RUNNER_SANDBOX_IMAGE: python:3.14.5-alpine3.22@sha256:6b91e66ab2a880ce9ca5a1b91c70f45963ff71ff68268df056336e1a657d5efd
+  PYTHON_RUNNER_SERVICE_SHARED_SECRET: image-contract-secret-0123456789abcdef0123456789
+  PYTHON_RUNNER_SERVICE_BASE_URL: http://127.0.0.1:18090
+  PYTHON_RUNNER_WORKSPACE_ROOT: /var/lib/ai-code-dojo/python-runner-workspaces
+
+jobs:
+  image-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: problem runtime packager unit test
+        run: node --test tests/unit/python-runner-image-packager.test.mjs
+
+      - name: Trivy例外contract unit test
+        run: node --test tests/unit/python-runner-trivy-exception-validator.test.mjs
+
+      - name: Runner service image build
+        run: >-
+          docker build
+          --file apps/python-runner/Dockerfile
+          --tag "$PYTHON_RUNNER_SERVICE_IMAGE"
+          .
+
+      - name: Runtime image内容を検証
+        run: |
+          docker run --rm --entrypoint sh "$PYTHON_RUNNER_SERVICE_IMAGE" -ec '
+            node --version | grep -Fx "v22.23.1"
+            docker --version | grep -F "Docker version 29.6.2"
+            ! command -v npm
+            ! command -v yarn
+            test ! -e /app/.git
+            test ! -e /app/docs
+            test -f /app/problems/examples/python-bugfix-score-buckets/problem.json
+            test -f /app/problems/examples/python-bugfix-score-buckets/tests/visible/score_visible_cases.json
+            test -f /app/problems/examples/python-bugfix-score-buckets/tests/hidden/score_hidden_cases.json
+            test ! -e /app/problems/examples/python-bugfix-score-buckets/tests/hidden/score_hidden_test.py
+            test ! -e /app/problems/examples/python-bugfix-score-buckets/starter/score.py
+            test -z "$(find /app/problems/examples -type f ! -name problem.json ! -name "*.json" -print -quit)"
+          '
+
+      - name: Python sandbox imageを事前取得
+        run: docker pull "$PYTHON_RUNNER_SANDBOX_IMAGE"
+
+      - name: shared workspaceを準備
+        run: |
+          sudo rm -rf "$PYTHON_RUNNER_WORKSPACE_ROOT"
+          sudo mkdir -p "$PYTHON_RUNNER_WORKSPACE_ROOT"
+          sudo chmod 0700 "$PYTHON_RUNNER_WORKSPACE_ROOT"
+
+      - name: hardened Runner service containerを起動
+        run: |
+          docker run -d \
+            --name ai-code-dojo-python-runner-image-contract \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges=true \
+            --user 0:0 \
+            -p 127.0.0.1:18090:8090 \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PYTHON_RUNNER_WORKSPACE_ROOT:$PYTHON_RUNNER_WORKSPACE_ROOT" \
+            -e TMPDIR="$PYTHON_RUNNER_WORKSPACE_ROOT" \
+            -e PYTHON_RUNNER_SHARED_SECRET="$PYTHON_RUNNER_SERVICE_SHARED_SECRET" \
+            -e PYTHON_RUNNER_MAX_CONCURRENCY=1 \
+            -e PYTHON_RUNNER_MAX_QUEUED_JOBS=2 \
+            -e PYTHON_RUNNER_IDEMPOTENCY_TTL_MS=60000 \
+            -e PYTHON_RUNNER_MAX_CLOCK_SKEW_MS=60000 \
+            -e PYTHON_RUNNER_MAX_REQUEST_BYTES=98304 \
+            "$PYTHON_RUNNER_SERVICE_IMAGE"
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent "$PYTHON_RUNNER_SERVICE_BASE_URL/health" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs ai-code-dojo-python-runner-image-contract
+          exit 1
+
+      - name: Runner service image → host Docker → Python sandbox E2E
+        env:
+          RUNNER_PYTHON_SERVICE_IMAGE_CONTRACT: '1'
+        run: node --test tests/integration/python-runner-service-image.test.mjs
+
+      - name: SBOMを生成
+        uses: anchore/sbom-action@v0.24.0
+        with:
+          image: ${{ env.PYTHON_RUNNER_SERVICE_IMAGE }}
+          format: cyclonedx-json
+          output-file: python-runner-sbom.cdx.json
+          artifact-name: python-runner-sbom
+          upload-artifact: true
+          upload-release-assets: false
+
+      - name: Trivy vulnerability reportを生成
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.PYTHON_RUNNER_SERVICE_IMAGE }}
+          format: json
+          output: python-runner-trivy.json
+          exit-code: '0'
+          vuln-type: 'os,library'
+
+      - name: Trivy reportをartifactへ保存
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-runner-trivy
+          path: python-runner-trivy.json
+          retention-days: 14
+
+      - name: HIGH / CRITICAL vulnerabilityを期限付き例外以外拒否
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.PYTHON_RUNNER_SERVICE_IMAGE }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: false
+          vuln-type: 'os,library'
+          severity: 'HIGH,CRITICAL'
+          trivyignores: '.trivyignore.yaml'
+          skip-setup-trivy: true
+
+      - name: failure時Runner logを表示
+        if: failure()
+        run: docker logs ai-code-dojo-python-runner-image-contract || true
+
+      - name: containerとworkspaceをcleanup
+        if: always()
+        run: |
+          docker rm -f ai-code-dojo-python-runner-image-contract || true
+          orphan_ids="$(docker ps -aq --filter label=ai-code-dojo.python-runner=1)"
+          if [ -n "$orphan_ids" ]; then docker rm -f $orphan_ids; fi
+          sudo rm -rf "$PYTHON_RUNNER_WORKSPACE_ROOT"

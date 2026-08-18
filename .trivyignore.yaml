@@ -1,0 +1,57 @@
+vulnerabilities:
+  - id: CVE-2026-33818
+    paths:
+      - usr/local/bin/docker
+    purls:
+      - pkg:golang/stdlib@v1.26.5
+    expired_at: 2026-09-17
+    statement: Docker CLI 29.6.2 is the latest stable release and Go 1.26.6 is not released yet; re-evaluate on expiry.
+  - id: CVE-2026-39821
+    paths:
+      - usr/local/bin/docker
+    purls:
+      - pkg:golang/stdlib@v1.26.5
+    expired_at: 2026-09-17
+    statement: Docker CLI 29.6.2 is the latest stable release and Go 1.26.6 is not released yet; re-evaluate on expiry.
+  - id: CVE-2026-46600
+    paths:
+      - usr/local/bin/docker
+    purls:
+      - pkg:golang/stdlib@v1.26.5
+    expired_at: 2026-09-17
+    statement: Docker CLI 29.6.2 is the latest stable release and Go 1.26.6 is not released yet; re-evaluate on expiry.
+  - id: CVE-2026-56853
+    paths:
+      - usr/local/bin/docker
+    purls:
+      - pkg:golang/stdlib@v1.26.5
+    expired_at: 2026-09-17
+    statement: Docker CLI 29.6.2 is the latest stable release and Go 1.26.6 is not released yet; re-evaluate on expiry.
+  - id: CVE-2026-56858
+    paths:
+      - usr/local/bin/docker
+    purls:
+      - pkg:golang/stdlib@v1.26.5
+    expired_at: 2026-09-17
+    statement: Docker CLI 29.6.2 is the latest stable release and Go 1.26.6 is not released yet; re-evaluate on expiry.
+  - id: CVE-2026-56859
+    paths:
+      - usr/local/bin/docker
+    purls:
+      - pkg:golang/stdlib@v1.26.5
+    expired_at: 2026-09-17
+    statement: Docker CLI 29.6.2 is the latest stable release and Go 1.26.6 is not released yet; re-evaluate on expiry.
+  - id: CVE-2026-56860
+    paths:
+      - usr/local/bin/docker
+    purls:
+      - pkg:golang/stdlib@v1.26.5
+    expired_at: 2026-09-17
+    statement: Docker CLI 29.6.2 is the latest stable release and Go 1.26.6 is not released yet; re-evaluate on expiry.
+  - id: CVE-2026-56862
+    paths:
+      - usr/local/bin/docker
+    purls:
+      - pkg:golang/stdlib@v1.26.5
+    expired_at: 2026-09-17
+    statement: Docker CLI 29.6.2 is the latest stable release and Go 1.26.6 is not released yet; re-evaluate on expiry.

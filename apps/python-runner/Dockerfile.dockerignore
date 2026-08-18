@@ -1,0 +1,12 @@
+**
+!apps/
+!apps/python-runner/
+!apps/python-runner/**
+!packages/
+!packages/runner-sdk/
+!packages/runner-sdk/**
+!problems/
+!problems/examples/
+!problems/examples/**
+!scripts/
+!scripts/package-python-runner-problems.mjs
