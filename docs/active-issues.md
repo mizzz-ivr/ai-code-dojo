@@ -1,6 +1,6 @@
 # active-issues（正本）
 
-最終更新: 2026-08-18（Issue #151 / PR #152 Python Runner ECR release contract）
+最終更新: 2026-08-19（Issue #153 / PR #154 Python Runner staging change set review）
 
 ## この文書の目的
 
@@ -17,10 +17,10 @@
 ### #145 Python Runnerの本番隔離実行基盤を導入する
 
 - 優先度: P1
-- 状態: Open / Remote Runner・review-only staging IaC・service imageまでmerge済み / staging gate継続
+- 状態: Open / Remote Runner・review-only staging IaC・service image・ECR release contractまでmerge済み / staging gate継続
 - GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/145`
-- PR #146 / #148 / #150: merge済み。
-- Linear: 無料Issue上限のためGitHub Issue / Repository docs / Notionを管理正本とする。
+- PR #146 / #148 / #150 / #152: merge済み。
+- Python Public submission: OFF / fail-closed。
 
 #### 完了済み
 
@@ -29,62 +29,66 @@
 - hidden test filesystem isolation。
 - pinned Python sandbox / network none / read-only / non-root / resource hardening。
 - dedicated ECS/EC2 host、internal ALB、private DNS、Secrets Manager、専用SGのreview-only IaC。
-- digest固定Node / Docker CLI service image。
-- nested Docker E2E、SBOM、HIGH/CRITICAL Trivy gate。
+- digest固定Runner service image、nested Docker E2E、SBOM、Trivy gate。
+- private ECR immutable release contract、OIDC publisher、source commit → digest release manifest。
 
 #### 残gate
 
-- Issue #151 / PR #152 ECR publish / immutable digest release contract。
-- ECR release stack bootstrapのreview /明示承認。
-- dedicated GitHub Environment保護設定。
+- Issue #153 / PR #154 release manifest → review-only staging change set。
+- Python Runner staging CloudFormation execution roleのleast-privilege IaC。
+- ECR / review / execution role stacksのbootstrap review / 明示承認。
+- dedicated GitHub Environments保護設定。
 - 明示承認後のmanual image publish。
-- digest URIを使用したstaging change set review。
+- review-only change set作成・レビュー。
 - 明示承認後のActual staging deploy。
 - Worker runtime wiring。
-- adversarial isolation test。
-- concurrency / quota / cost検証。
-- secret rotation / rollback確認。
+- adversarial isolation test、concurrency / quota / cost検証、secret rotation / rollback確認。
 - Python Public gate解除判断。
 
-### #151 Python Runner ECR publishとimmutable digest release contractをreview-onlyで追加する
+### #153 Python Runner staging change setをrelease manifestからreview-only生成する
 
 - 優先度: P1
-- 状態: Open / PR #152 Draft・実装/検証中
-- GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/151`
-- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/152`
-- Branch: `feat/python-runner-ecr-release`
+- 状態: Open / PR #154 Draft・実装/検証中
+- GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/153`
+- GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/154`
+- Branch: `feat/python-runner-staging-change-set`
 - Parent: #145
-- Depends on: #149 / PR #150
+- Depends on: #151 / PR #152
 - Linear: Issue作成を試行したがFree workspace上限で失敗。GitHub Issueを正本とする。
 
 #### 目的
 
-PR #150のservice imageをprivate ECRへ安全にpublishできる契約と、staging IaCへ渡す`repository@sha256:digest` release manifestを定義する。
+PR #152のvalidated immutable release manifestだけをPython Runner staging stack parameterへ接続し、任意image URIを入力できないreview-only change set経路を作る。
 
 #### 実装中
 
-- ECR repository / GitHub OIDC publisher roleのreview-only CloudFormation。
-- repository名固定、tag完全IMMUTABLE、scan-on-push、AES256、Retain。
-- lifecycleはuntagged imageを7日後に削除するだけ。
-- publisher roleは対象repositoryのpush/readbackだけ。設定変更・削除権限なし。
-- manual `workflow_dispatch` publish workflow。
-- main限定、固定フレーズ手入力、dedicated Environment、15分OIDC session。
-- account / region / repository URI / IAM role ARN drift拒否。
-- source tag `sha-<full source commit>`固定、existing tag拒否。
-- publish前build / runtime content / SBOM / raw Trivy / HIGH-CRITICAL gate。
-- ECR lifecycle JSON semantic validation。
-- registry digest readbackとrelease manifest + checksum artifact。
-- IaC/workflow/manifest contract validatorとunit test。
+- manual workflow入力はrelease workflow run IDと固定確認フレーズだけ。
+- publish runがmanual / main / SuccessであることをAWS credential取得前に確認。
+- publish run `head_sha`からexact artifact名を算出し、そのrun内の未期限artifactを1件だけ許可。
+- artifact file集合、SHA-256 checksum、release manifest schemaをfail-closed検証。
+- manifest source commitとpublish run head SHAを一致させ、current main ancestorだけ許可。
+- validated manifestから`RunnerServiceImageUri=repository@sha256:digest`を生成。
+- VPC / subnet / hosted zone / DNS / ACM certificate / instance typeをGitHub Environment variablesから取得して形式・account・regionを検証。
+- deterministic CloudFormation parameter bundleを生成。
+- dedicated OIDC review roleはValidateTemplate / CreateChangeSet / Describe系 / reviewed execution role PassRoleだけ。
+- workflowは`ExecuteChangeSet` / direct deploy / create-stack / update-stack / delete-stackを禁止。
+- change set summaryへReplacementを含む差分を表示。
+- Repository validator / unit testを`pnpm infra:validate` / `pnpm test:unit`へ統合。
 
 #### このIssueでは行わない
 
-- Actual CloudFormation apply。
-- Actual ECR repository作成。
-- GitHub Environment作成・設定変更。
-- Actual image push。
-- staging deploy。
-- Worker wiring。
-- Python Public allowlist変更。
+- ECR release stack Actual apply。
+- Actual image publish。
+- CloudFormation execution roleの最終IaC。
+- review role Actual apply。
+- Actual change set作成・実行。
+- staging deploy / Worker wiring / Python Public allowlist変更。
+
+#### 要確認・後続
+
+- `PrivateSubnetIds`はこのPRでは形式・2件以上・一意性まで検証する。実AWS上でprivate subnetか、2 AZ以上かはActual実行前に別途read-only preflightまたは手動確認が必要。
+- ACM certificateのSAN/CNがRunnerDnsNameをcoverすること、private hosted zoneが対象VPCへassociation済みであることもActual実行前確認が必要。
+- change set実行前に、staging stackが必要とするCloudFormation execution roleを別PRでleast privilege定義する。
 
 ## Blocked Issue
 
@@ -94,15 +98,14 @@ PR #150のservice imageをprivate ECRへ安全にpublishできる契約と、sta
 - Python contentはcatalogへ存在しても「採点準備中」とする。
 - 公開allowlistへPythonを追加しない。
 - 再開条件:
-  1. PR #152をmergeする。
-  2. ECR release stackとGitHub Environmentをreviewし、明示承認後にbootstrapする。
-  3. manual publishでdigest-pinned release manifestを生成する。
-  4. Python Runner staging change setをレビューする。
+  1. PR #154をmergeする。
+  2. execution roleとActual bootstrap手順をレビューする。
+  3. 明示承認後にECR imageをpublishする。
+  4. review-only staging change setを作成・レビューする。
   5. 明示承認後にstaging Remote Runnerをdeployする。
-  6. Runner Client SG / URL / secretをWorkerへ安全にwiringする。
+  6. Worker Client SG / URL / secretを安全にwiringする。
   7. hidden filesystem / network / privilege / resource / timeout / orphan cleanupをstagingで再検証する。
-  8. concurrency / quota / cost上限を確認する。
-  9. adversarial code testを通す。
+  8. concurrency / quota / cost上限を確認し、adversarial code testを通す。
 
 ### ECS API / Worker production wiring
 
@@ -111,32 +114,33 @@ PR #150のservice imageをprivate ECRへ安全にpublishできる契約と、sta
 
 ## Recently Completed
 
+### #151 / PR #152（完了済み）
+
+- 完了日: 2026-08-19（日本時間）。
+- ECR immutable release contract、manual OIDC publish workflow、registry digest release manifest、validator / runbookをmainへ反映。
+- merge commit: `31432fde4695e17582dcea997a0a6bef772fee45`。
+- Actual AWS / ECR変更・image pushは未実施。
+
 ### #149 / PR #150（完了済み）
 
 - 完了日: 2026-08-18（日本時間）。
-- Python Runner service image、trusted runtime packaging、nested Docker E2E、SBOM、Trivy HIGH/CRITICAL gateをmainへ反映。
+- Python Runner service image、trusted runtime packaging、nested Docker E2E、SBOM、Trivy gateをmainへ反映。
 - merge commit: `eb13f0b204ef6d34ce0c47327e7f76289c274988`。
-- Actual ECR / AWS変更は未実施。
 
 ### #147 / PR #148（完了済み）
 
-- 完了日: 2026-08-17（日本時間）。
 - dedicated ECS/EC2 staging review-only IaC、network / IAM / secret / cost boundary、validatorをmainへ反映。
-- Actual AWS resourceは未作成。
-
-### #145 部分完了 / PR #146（merge済み）
-
-- Python Remote Runner、hidden test filesystem isolation、HMAC、idempotency、resource hardeningをmainへ反映。
-- Parent #145はstaging gate完了までOpenを維持する。
 
 ## Follow-up候補
 
-Runner安全性:
+Runner staging gate:
 
-1. #151 / PR #152 merge。
-2. 明示承認後のECR release bootstrap / manual publish。
-3. staging change set / adversarial test。
-4. Docker socketを廃止するjob-per-task executor backendの検討。
+1. #153 / PR #154 merge。
+2. Python Runner staging CloudFormation execution role least-privilege IaC。
+3. 明示承認後のECR / review / execution role bootstrapとGitHub Environment設定。
+4. manual image publish → review-only change set → explicit-approved deploy。
+5. staging adversarial / cost / rollback検証。
+6. Python Public gate判定。
 
 ユーザー価値:
 
@@ -160,11 +164,11 @@ Runner安全性:
 - PythonをActual staging検証前に公開しない。
 - WorkerへDocker socketを公開しない。
 - hidden casesをPython sandbox filesystemへmountしない。
-- mutable ECR tagをstaging runtimeへ渡さない。
-- image publisher roleへrepository削除・設定変更権限を与えない。
+- mutable ECR tagや任意image URIをstaging runtimeへ渡さない。
+- release artifact identity / checksum / main ancestryをAWS認証前に検証する。
+- review roleへ`ExecuteChangeSet`やtarget resource直接変更権限を与えない。
 - AWS long-lived access keyをGitHub Actionsへ保存しない。
-- 脆弱性例外を無期限・wildcardで許可しない。
 - Submission + outbox atomicity、processing lease / attempt fencing / completion guardを弱めない。
 - Outbox claim / lease前にAPI desired countを1より増やさない。
 - DB cutoverとSQS transport切替を同じchangeへ含めない。
-- Actual AWS resource / image pushはreviewと明示承認を経る。
+- Actual AWS resource / image push / change set executionはreviewと明示承認を経る。
