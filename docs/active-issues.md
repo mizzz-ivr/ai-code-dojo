@@ -48,7 +48,7 @@
 ### #153 Python Runner staging change setをrelease manifestからreview-only生成する
 
 - 優先度: P1
-- 状態: Open / PR #154 Draft・実装/検証中
+- 状態: Open / PR #154 Ready for review / CI green / mergeable
 - GitHub Issue: `https://github.com/mizzz-ivr/ai-code-dojo/issues/153`
 - GitHub PR: `https://github.com/mizzz-ivr/ai-code-dojo/pull/154`
 - Branch: `feat/python-runner-staging-change-set`
@@ -60,7 +60,7 @@
 
 PR #152のvalidated immutable release manifestだけをPython Runner staging stack parameterへ接続し、任意image URIを入力できないreview-only change set経路を作る。
 
-#### 実装中
+#### 実装済み
 
 - manual workflow入力はrelease workflow run IDと固定確認フレーズだけ。
 - publish runがmanual / main / SuccessであることをAWS credential取得前に確認。
@@ -74,6 +74,8 @@ PR #152のvalidated immutable release manifestだけをPython Runner staging sta
 - workflowは`ExecuteChangeSet` / direct deploy / create-stack / update-stack / delete-stackを禁止。
 - change set summaryへReplacementを含む差分を表示。
 - Repository validator / unit testを`pnpm infra:validate` / `pnpm test:unit`へ統合。
+- 初回CIで残っていたartifact wildcard validatorを、workflow本体のexact artifact identity contractへ修正。
+- 最終headでdocs / lint / typecheck / unit / integration / schema / infra / buildをすべてSuccess確認。
 
 #### このIssueでは行わない
 
