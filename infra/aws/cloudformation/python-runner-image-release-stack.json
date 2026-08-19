@@ -1,0 +1,140 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Review-only staging ECR repository and GitHub OIDC publisher role for ai-code-dojo Python Runner images",
+  "Metadata": {
+    "DeploymentSafety": {
+      "Mode": "review-only",
+      "RequiresExplicitApproval": true,
+      "ActualPublishDuringReview": false,
+      "PythonPublicGate": "disabled",
+      "ReleaseIdentity": "source-commit-tag-and-registry-digest"
+    }
+  },
+  "Parameters": {
+    "EnvironmentName": {
+      "Type": "String",
+      "Default": "staging",
+      "AllowedValues": ["staging"]
+    },
+    "RepositoryName": {
+      "Type": "String",
+      "Default": "ai-code-dojo-staging-python-runner",
+      "AllowedValues": ["ai-code-dojo-staging-python-runner"]
+    },
+    "GitHubOidcProviderArn": {
+      "Type": "String",
+      "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):iam::[0-9]{12}:oidc-provider/token\\.actions\\.githubusercontent\\.com$",
+      "ConstraintDescription": "Use the existing token.actions.githubusercontent.com IAM OIDC provider ARN."
+    },
+    "GitHubOidcSubject": {
+      "Type": "String",
+      "AllowedPattern": "^repo:(mizzz-ivr/ai-code-dojo|mizzz-ivr@[0-9]+/ai-code-dojo@[0-9]+):environment:staging-python-runner-image$",
+      "ConstraintDescription": "Use the exact ai-code-dojo staging-python-runner-image GitHub Environment subject."
+    }
+  },
+  "Resources": {
+    "PythonRunnerImageRepository": {
+      "Type": "AWS::ECR::Repository",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "RepositoryName": {"Ref": "RepositoryName"},
+        "ImageTagMutability": "IMMUTABLE",
+        "ImageScanningConfiguration": {"ScanOnPush": true},
+        "EncryptionConfiguration": {"EncryptionType": "AES256"},
+        "EmptyOnDelete": false,
+        "LifecyclePolicy": {
+          "LifecyclePolicyText": "{\"rules\":[{\"rulePriority\":1,\"description\":\"Expire untagged staging images after 7 days\",\"selection\":{\"tagStatus\":\"untagged\",\"countType\":\"sinceImagePushed\",\"countUnit\":\"days\",\"countNumber\":7},\"action\":{\"type\":\"expire\"}}]}"
+        },
+        "Tags": [
+          {"Key": "Application", "Value": "ai-code-dojo"},
+          {"Key": "Environment", "Value": {"Ref": "EnvironmentName"}},
+          {"Key": "RepositoryPurpose", "Value": "python-runner-service-image"}
+        ]
+      }
+    },
+    "GitHubActionsImagePublisherRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "Description": "Publishes immutable ai-code-dojo staging Python Runner images from the dedicated GitHub Environment",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {"Federated": {"Ref": "GitHubOidcProviderArn"}},
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                  "token.actions.githubusercontent.com:sub": {"Ref": "GitHubOidcSubject"}
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "AuthenticateToEcr",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "GetEcrAuthorizationToken",
+                  "Effect": "Allow",
+                  "Action": "ecr:GetAuthorizationToken",
+                  "Resource": "*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "PublishPythonRunnerImage",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "PublishAndReadBackPythonRunnerImage",
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecr:BatchCheckLayerAvailability",
+                    "ecr:CompleteLayerUpload",
+                    "ecr:DescribeImages",
+                    "ecr:DescribeRepositories",
+                    "ecr:GetLifecyclePolicy",
+                    "ecr:InitiateLayerUpload",
+                    "ecr:ListImages",
+                    "ecr:PutImage",
+                    "ecr:UploadLayerPart"
+                  ],
+                  "Resource": {"Fn::GetAtt": ["PythonRunnerImageRepository", "Arn"]}
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {"Key": "Application", "Value": "ai-code-dojo"},
+          {"Key": "Environment", "Value": {"Ref": "EnvironmentName"}},
+          {"Key": "RolePurpose", "Value": "github-actions-python-runner-image-publish"}
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "PythonRunnerImageRepositoryArn": {
+      "Value": {"Fn::GetAtt": ["PythonRunnerImageRepository", "Arn"]}
+    },
+    "PythonRunnerImageRepositoryUri": {
+      "Description": "Set as AWS_STAGING_PYTHON_RUNNER_ECR_URI in the dedicated GitHub Environment after explicit stack approval and creation.",
+      "Value": {"Fn::GetAtt": ["PythonRunnerImageRepository", "RepositoryUri"]}
+    },
+    "GitHubActionsImagePublisherRoleArn": {
+      "Description": "Set as AWS_STAGING_PYTHON_RUNNER_ECR_PUBLISH_ROLE_ARN in the dedicated GitHub Environment after explicit stack approval and creation.",
+      "Value": {"Fn::GetAtt": ["GitHubActionsImagePublisherRole", "Arn"]}
+    },
+    "ExpectedGitHubOidcSubject": {
+      "Value": {"Ref": "GitHubOidcSubject"}
+    }
+  }
+}
