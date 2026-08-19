@@ -1,0 +1,298 @@
+name: review-python-runner-staging-change-set
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: 成功したpublish-python-runner-staging-image workflow run ID
+        required: true
+        type: string
+      confirm_review:
+        description: CREATE_PYTHON_RUNNER_STAGING_CHANGE_SET と入力してreview-only change set作成を明示確認
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+concurrency:
+  group: ai-code-dojo-staging-python-runner-change-set-review
+  cancel-in-progress: false
+
+jobs:
+  create-change-set:
+    if: github.ref == 'refs/heads/main' && inputs.confirm_review == 'CREATE_PYTHON_RUNNER_STAGING_CHANGE_SET'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: staging-python-runner-review
+    env:
+      RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+      AWS_REGION: ${{ vars.AWS_STAGING_REGION }}
+      AWS_ACCOUNT_ID: ${{ vars.AWS_STAGING_ACCOUNT_ID }}
+      AWS_STAGING_REGION: ${{ vars.AWS_STAGING_REGION }}
+      AWS_STAGING_ACCOUNT_ID: ${{ vars.AWS_STAGING_ACCOUNT_ID }}
+      REVIEW_ROLE_ARN: ${{ vars.AWS_STAGING_PYTHON_RUNNER_REVIEW_ROLE_ARN }}
+      CFN_EXECUTION_ROLE_ARN: ${{ vars.AWS_STAGING_PYTHON_RUNNER_CFN_EXECUTION_ROLE_ARN }}
+      STACK_NAME: ${{ vars.AWS_STAGING_PYTHON_RUNNER_STACK_NAME }}
+      AWS_STAGING_VPC_ID: ${{ vars.AWS_STAGING_VPC_ID }}
+      AWS_STAGING_PRIVATE_SUBNET_IDS: ${{ vars.AWS_STAGING_PRIVATE_SUBNET_IDS }}
+      AWS_STAGING_PRIVATE_HOSTED_ZONE_ID: ${{ vars.AWS_STAGING_PRIVATE_HOSTED_ZONE_ID }}
+      AWS_STAGING_PYTHON_RUNNER_DNS_NAME: ${{ vars.AWS_STAGING_PYTHON_RUNNER_DNS_NAME }}
+      AWS_STAGING_PYTHON_RUNNER_CERTIFICATE_ARN: ${{ vars.AWS_STAGING_PYTHON_RUNNER_CERTIFICATE_ARN }}
+      AWS_STAGING_PYTHON_RUNNER_INSTANCE_TYPE: ${{ vars.AWS_STAGING_PYTHON_RUNNER_INSTANCE_TYPE }}
+      TEMPLATE_PATH: infra/aws/cloudformation/python-runner-staging-stack.json
+      CHANGE_SET_NAME: ai-code-dojo-python-runner-staging-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate review inputs and environment variables
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "${RELEASE_RUN_ID}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::release_run_id must be a positive GitHub Actions workflow run ID."
+            exit 1
+          fi
+          required_values=(
+            "${AWS_REGION}"
+            "${AWS_ACCOUNT_ID}"
+            "${REVIEW_ROLE_ARN}"
+            "${CFN_EXECUTION_ROLE_ARN}"
+            "${STACK_NAME}"
+            "${AWS_STAGING_VPC_ID}"
+            "${AWS_STAGING_PRIVATE_SUBNET_IDS}"
+            "${AWS_STAGING_PRIVATE_HOSTED_ZONE_ID}"
+            "${AWS_STAGING_PYTHON_RUNNER_DNS_NAME}"
+            "${AWS_STAGING_PYTHON_RUNNER_CERTIFICATE_ARN}"
+            "${AWS_STAGING_PYTHON_RUNNER_INSTANCE_TYPE}"
+          )
+          for value in "${required_values[@]}"; do
+            if [[ -z "${value}" ]]; then
+              echo "::error::staging-python-runner-review GitHub Environment variables are incomplete."
+              exit 1
+            fi
+          done
+          if [[ ! "${AWS_ACCOUNT_ID}" =~ ^[0-9]{12}$ ]]; then
+            echo "::error::AWS_STAGING_ACCOUNT_ID has an invalid format."
+            exit 1
+          fi
+          if [[ "${STACK_NAME}" != "ai-code-dojo-staging-python-runner" ]]; then
+            echo "::error::AWS_STAGING_PYTHON_RUNNER_STACK_NAME must remain ai-code-dojo-staging-python-runner."
+            exit 1
+          fi
+          if [[ ! "${REVIEW_ROLE_ARN}" =~ ^arn:aws[a-zA-Z-]*:iam::${AWS_ACCOUNT_ID}:role/.+$ ]]; then
+            echo "::error::AWS_STAGING_PYTHON_RUNNER_REVIEW_ROLE_ARN has an invalid format or account."
+            exit 1
+          fi
+          if [[ ! "${CFN_EXECUTION_ROLE_ARN}" =~ ^arn:aws[a-zA-Z-]*:iam::${AWS_ACCOUNT_ID}:role/.+$ ]]; then
+            echo "::error::AWS_STAGING_PYTHON_RUNNER_CFN_EXECUTION_ROLE_ARN has an invalid format or account."
+            exit 1
+          fi
+          echo "::add-mask::${AWS_ACCOUNT_ID}"
+          echo "::add-mask::${REVIEW_ROLE_ARN}"
+          echo "::add-mask::${CFN_EXECUTION_ROLE_ARN}"
+
+      - name: Inspect selected release workflow run
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RELEASE_RUN_ID}")"
+          if ! jq -e '.name == "publish-python-runner-staging-image" and .event == "workflow_dispatch" and .head_branch == "main" and .conclusion == "success"' <<< "${run_json}" >/dev/null; then
+            echo "::error::Selected release run must be a successful manual Python Runner image publish from main."
+            exit 1
+          fi
+          release_head_sha="$(jq -r '.head_sha' <<< "${run_json}")"
+          if [[ ! "${release_head_sha}" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "::error::Selected release run returned an invalid head SHA."
+            exit 1
+          fi
+          artifact_name="python-runner-image-release-${release_head_sha}"
+          artifacts_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RELEASE_RUN_ID}/artifacts?per_page=100")"
+          artifact_count="$(jq --arg name "${artifact_name}" '[.artifacts[] | select(.name == $name and .expired == false)] | length' <<< "${artifacts_json}")"
+          if [[ "${artifact_count}" != "1" ]]; then
+            echo "::error::Selected release run must contain exactly one unexpired immutable release manifest artifact for its head SHA."
+            exit 1
+          fi
+          echo "release_head_sha=${release_head_sha}" >> "${GITHUB_OUTPUT}"
+          echo "artifact_name=${artifact_name}" >> "${GITHUB_OUTPUT}"
+
+      - name: Download immutable release manifest artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: ${{ steps.release.outputs.artifact_name }}
+          path: release-artifact
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.RELEASE_RUN_ID }}
+
+      - name: Validate release artifact files, checksum and schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t release_files < <(find release-artifact -maxdepth 1 -type f -printf '%f\n' | sort)
+          expected_files=(
+            "python-runner-image-release.json"
+            "python-runner-image-release.json.sha256"
+          )
+          if [[ "${release_files[*]}" != "${expected_files[*]}" ]]; then
+            echo "::error::Release artifact must contain only the manifest and its checksum."
+            exit 1
+          fi
+          node scripts/validate-python-runner-release-artifact.mjs \
+            release-artifact/python-runner-image-release.json \
+            release-artifact/python-runner-image-release.json.sha256
+
+      - name: Verify release source identity against main
+        shell: bash
+        env:
+          RELEASE_HEAD_SHA: ${{ steps.release.outputs.release_head_sha }}
+        run: |
+          set -euo pipefail
+          source_commit="$(jq -r '.sourceCommit' release-artifact/python-runner-image-release.json)"
+          if [[ "${source_commit}" != "${RELEASE_HEAD_SHA}" ]]; then
+            echo "::error::Release manifest sourceCommit does not match the selected publish workflow head SHA."
+            exit 1
+          fi
+          if ! git cat-file -e "${source_commit}^{commit}" 2>/dev/null; then
+            echo "::error::Release source commit is not present in repository history."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "${source_commit}" "${GITHUB_SHA}"; then
+            echo "::error::Release source commit must be an ancestor of the current main revision."
+            exit 1
+          fi
+
+      - name: Generate deterministic staging parameter bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/create-python-runner-staging-change-set-parameters.mjs \
+            release-artifact/python-runner-image-release.json \
+            > python-runner-staging-parameters.json
+
+      - name: Configure AWS credentials with GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ env.REVIEW_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: ai-code-dojo-runner-review-${{ github.run_id }}
+          role-duration-seconds: 900
+          mask-aws-account-id: true
+          allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
+
+      - name: Validate Python Runner staging CloudFormation template
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws cloudformation validate-template \
+            --template-body "file://${TEMPLATE_PATH}" \
+            >/dev/null
+
+      - name: Determine change set type
+        id: stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          if aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            >/dev/null 2>&1; then
+            echo "type=UPDATE" >> "${GITHUB_OUTPUT}"
+          else
+            echo "type=CREATE" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Create review-only Python Runner staging change set
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws cloudformation create-change-set \
+            --stack-name "${STACK_NAME}" \
+            --change-set-name "${CHANGE_SET_NAME}" \
+            --change-set-type "${{ steps.stack.outputs.type }}" \
+            --description "Review-only Python Runner staging change set from release workflow run ${RELEASE_RUN_ID}" \
+            --template-body "file://${TEMPLATE_PATH}" \
+            --parameters file://python-runner-staging-parameters.json \
+            --capabilities CAPABILITY_IAM \
+            --role-arn "${CFN_EXECUTION_ROLE_ARN}" \
+            --tags \
+              Key=Application,Value=ai-code-dojo \
+              Key=Environment,Value=staging \
+              Key=ManagedBy,Value=cloudformation \
+            >/dev/null
+
+      - name: Wait for change set
+        id: wait
+        shell: bash
+        run: |
+          set -euo pipefail
+          if aws cloudformation wait change-set-create-complete \
+            --stack-name "${STACK_NAME}" \
+            --change-set-name "${CHANGE_SET_NAME}" \
+            >/dev/null 2>&1; then
+            echo "has_changes=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          status="$(aws cloudformation describe-change-set --stack-name "${STACK_NAME}" --change-set-name "${CHANGE_SET_NAME}" --query Status --output text)"
+          reason="$(aws cloudformation describe-change-set --stack-name "${STACK_NAME}" --change-set-name "${CHANGE_SET_NAME}" --query StatusReason --output text)"
+          if [[ "${status}" == "FAILED" && "${reason}" == *"didn't contain changes"* ]]; then
+            echo "has_changes=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          echo "::error::Python Runner staging change set creation failed. Review CloudFormation without copying sensitive identifiers into GitHub."
+          exit 1
+
+      - name: Write review summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_commit="$(jq -r '.sourceCommit' release-artifact/python-runner-image-release.json)"
+          image_digest="$(jq -r '.imageDigest' release-artifact/python-runner-image-release.json)"
+          {
+            echo "## Python Runner staging change set"
+            echo
+            echo "- Stack: \`${STACK_NAME}\`"
+            echo "- Type: \`${{ steps.stack.outputs.type }}\`"
+            echo "- Release workflow run: \`${RELEASE_RUN_ID}\`"
+            echo "- Release source commit: \`${source_commit}\`"
+            echo "- Image digest: \`${image_digest}\`"
+            echo "- Change set: \`${CHANGE_SET_NAME}\`"
+            echo "- Execute: **未実施**"
+            echo "- Python Public gate: **OFF**"
+            echo
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          if [[ "${{ steps.wait.outputs.has_changes }}" != "true" ]]; then
+            echo "変更はありません。" >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          {
+            echo "| Action | Logical resource | Resource type | Replacement |"
+            echo "|---|---|---|---|"
+            aws cloudformation describe-change-set \
+              --stack-name "${STACK_NAME}" \
+              --change-set-name "${CHANGE_SET_NAME}" \
+              --query 'Changes[].ResourceChange.[Action,LogicalResourceId,ResourceType,Replacement]' \
+              --output text |
+              awk -F '\t' '{ printf "| %s | `%s` | `%s` | %s |\n", $1, $2, $3, $4 }'
+            echo
+            echo "> このworkflowはchange setを実行しません。Execution role、Replacement、IAM/network差分、image digestを別途レビューし、明示承認後の実行手順へ進んでください。"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Cleanup downloaded release metadata
+        if: always()
+        shell: bash
+        run: |
+          rm -rf release-artifact python-runner-staging-parameters.json
