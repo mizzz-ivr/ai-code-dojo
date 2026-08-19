@@ -204,7 +204,10 @@ export const validatePythonRunnerStagingChangeSetWorkflow = (source) => {
   requireIncludes('actions/download-artifact@v5', 'Workflow must use the official cross-run artifact downloader.');
   requireIncludes('github-token: ${{ github.token }}', 'Cross-run artifact download must use the scoped GitHub token.');
   requireIncludes('run-id: ${{ env.RELEASE_RUN_ID }}', 'Artifact download must be tied to the selected release workflow run.');
-  requireIncludes('pattern: python-runner-image-release-*', 'Workflow must download only Python Runner release manifest artifacts.');
+  requireIncludes('artifact_name="python-runner-image-release-${release_head_sha}"', 'Workflow must derive the exact release artifact name from the selected publish run head SHA.');
+  requireIncludes('artifacts?per_page=100', 'Workflow must inspect artifacts belonging to the selected publish run.');
+  requireIncludes("select(.name == $name and .expired == false)", 'Workflow must require one exact unexpired release artifact.');
+  requireIncludes('name: ${{ steps.release.outputs.artifact_name }}', 'Artifact download must use the exact validated artifact name.');
   requireIncludes('gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RELEASE_RUN_ID}"', 'Workflow must inspect the selected release workflow run.');
   requireIncludes(".name == \"publish-python-runner-staging-image\"", 'Workflow must require the Python Runner image publish workflow.');
   requireIncludes(".event == \"workflow_dispatch\"", 'Release workflow run must be manually dispatched.');
