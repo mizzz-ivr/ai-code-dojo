@@ -1,0 +1,204 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Review-only GitHub OIDC role for creating and inspecting ai-code-dojo Python Runner staging CloudFormation change sets",
+  "Metadata": {
+    "DeploymentSafety": {
+      "Mode": "review-only",
+      "RequiresExplicitApproval": true,
+      "CanExecuteChangeSet": false,
+      "CanMutateTargetResourcesDirectly": false,
+      "PythonPublicGate": "disabled"
+    }
+  },
+  "Parameters": {
+    "EnvironmentName": {
+      "Type": "String",
+      "Default": "staging",
+      "AllowedValues": [
+        "staging"
+      ]
+    },
+    "TargetStackName": {
+      "Type": "String",
+      "Default": "ai-code-dojo-staging-python-runner",
+      "AllowedValues": [
+        "ai-code-dojo-staging-python-runner"
+      ]
+    },
+    "GitHubOidcProviderArn": {
+      "Type": "String",
+      "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):iam::[0-9]{12}:oidc-provider/token\\.actions\\.githubusercontent\\.com$",
+      "ConstraintDescription": "Use the existing token.actions.githubusercontent.com IAM OIDC provider ARN."
+    },
+    "GitHubOidcSubject": {
+      "Type": "String",
+      "AllowedPattern": "^repo:(mizzz-ivr/ai-code-dojo|mizzz-ivr@[0-9]+/ai-code-dojo@[0-9]+):environment:staging-python-runner-review$",
+      "ConstraintDescription": "Use the exact ai-code-dojo staging-python-runner-review GitHub Environment subject."
+    },
+    "CloudFormationExecutionRoleArn": {
+      "Type": "String",
+      "AllowedPattern": "^arn:(aws|aws-us-gov|aws-cn):iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]{1,512}$",
+      "ConstraintDescription": "Use the separately reviewed Python Runner staging CloudFormation execution role ARN."
+    }
+  },
+  "Resources": {
+    "GitHubActionsRunnerChangeSetReviewRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "Description": "Creates and reviews Python Runner staging CloudFormation change sets without executing them",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Federated": {
+                  "Ref": "GitHubOidcProviderArn"
+                }
+              },
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                  "token.actions.githubusercontent.com:sub": {
+                    "Ref": "GitHubOidcSubject"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "ValidatePythonRunnerStagingTemplate",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "ValidatePythonRunnerTemplate",
+                  "Effect": "Allow",
+                  "Action": "cloudformation:ValidateTemplate",
+                  "Resource": "*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "CreateAndReviewPythonRunnerStagingChangeSet",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "CreatePythonRunnerChangeSet",
+                  "Effect": "Allow",
+                  "Action": "cloudformation:CreateChangeSet",
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${TargetStackName}/*"
+                  },
+                  "Condition": {
+                    "ArnEquals": {
+                      "cloudformation:RoleArn": {
+                        "Ref": "CloudFormationExecutionRoleArn"
+                      }
+                    },
+                    "StringLike": {
+                      "cloudformation:ChangeSetName": "ai-code-dojo-python-runner-staging-*"
+                    }
+                  }
+                },
+                {
+                  "Sid": "ReviewPythonRunnerStack",
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudformation:DescribeStacks",
+                    "cloudformation:ListChangeSets",
+                    "cloudformation:GetTemplate"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${TargetStackName}/*"
+                  }
+                },
+                {
+                  "Sid": "ReviewPythonRunnerChangeSet",
+                  "Effect": "Allow",
+                  "Action": "cloudformation:DescribeChangeSet",
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${TargetStackName}/*"
+                  },
+                  "Condition": {
+                    "StringLike": {
+                      "cloudformation:ChangeSetName": "ai-code-dojo-python-runner-staging-*"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "PassReviewedPythonRunnerExecutionRole",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "PassPythonRunnerExecutionRole",
+                  "Effect": "Allow",
+                  "Action": "iam:PassRole",
+                  "Resource": {
+                    "Ref": "CloudFormationExecutionRoleArn"
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "iam:PassedToService": "cloudformation.amazonaws.com"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Application",
+            "Value": "ai-code-dojo"
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "EnvironmentName"
+            }
+          },
+          {
+            "Key": "RolePurpose",
+            "Value": "python-runner-change-set-review"
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "GitHubActionsRunnerChangeSetReviewRoleArn": {
+      "Description": "Set as AWS_STAGING_PYTHON_RUNNER_REVIEW_ROLE_ARN in the staging-python-runner-review GitHub Environment.",
+      "Value": {
+        "Fn::GetAtt": [
+          "GitHubActionsRunnerChangeSetReviewRole",
+          "Arn"
+        ]
+      }
+    },
+    "ExpectedGitHubOidcSubject": {
+      "Value": {
+        "Ref": "GitHubOidcSubject"
+      }
+    },
+    "TargetStackName": {
+      "Value": {
+        "Ref": "TargetStackName"
+      }
+    },
+    "CloudFormationExecutionRoleArn": {
+      "Value": {
+        "Ref": "CloudFormationExecutionRoleArn"
+      }
+    }
+  }
+}
